@@ -102,7 +102,7 @@ function MBar({ label, value, max, color }) {
 }
 
 /* ── MealCard ── */
-function MealCard({ meal, onDelete }) {
+function MealCard({ meal, onDelete, onEdit }) {
   const [open,setOpen]=useState(false);
   const m3=[["P",meal.protein,C.mint],["C",meal.carbs,C.sky],["F",meal.fat,C.peach]];
   const m4=[["Protein",meal.protein,C.mint],["Carbs",meal.carbs,C.sky],["Fat",meal.fat,C.peach],["Fiber",meal.fiber||0,C.plum]];
@@ -149,10 +149,16 @@ function MealCard({ meal, onDelete }) {
           )}
           {meal.portionNote&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic",padding:"8px 10px",background:"rgba(201,168,76,.06)",borderRadius:8,borderLeft:`2px solid ${provColor}`}}>{meal.portionNote}</div>}
           {meal.description&&<div style={{fontSize:11,color:C.muted,marginTop:8}}><span style={{color:C.accent}}>Note:</span> {meal.description}</div>}
-          <button onClick={e=>{e.stopPropagation();if(confirm("Delete this meal?"))onDelete(meal.id);}}
-            style={{marginTop:12,background:"none",border:`1px solid ${C.danger}`,color:C.danger,borderRadius:8,padding:"0 14px",fontSize:11,cursor:"pointer",height:38}}>
-            Delete entry
-          </button>
+          <div style={{display:"flex",gap:10,marginTop:12}}>
+            <button onClick={e=>{e.stopPropagation();onEdit(meal);}}
+              style={{flex:1,background:"none",border:`1px solid ${provColor}`,color:provColor,borderRadius:8,padding:"0 14px",fontSize:11,cursor:"pointer",height:38}}>
+              Modify / re-analyze
+            </button>
+            <button onClick={e=>{e.stopPropagation();if(confirm("Delete this meal?"))onDelete(meal.id);}}
+              style={{background:"none",border:`1px solid ${C.danger}`,color:C.danger,borderRadius:8,padding:"0 14px",fontSize:11,cursor:"pointer",height:38}}>
+              Delete
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -160,13 +166,20 @@ function MealCard({ meal, onDelete }) {
 }
 
 /* ── Add Meal View ── */
-function AddView({ settings, onAdd, onCancel }) {
+function AddView({ settings, meal, onSave, onCancel }) {
   const { provider="anthropic", oaiKey="" } = settings;
-  const [img,setImg]           = useState(null);
-  const [desc,setDesc]         = useState("");
-  const [status,setStatus]     = useState("idle");
-  const [analysis,setAnalysis] = useState(null);
-  const [editCal,setEditCal]   = useState("");
+  const isEditing = Boolean(meal);
+  const initialAnalysis = meal ? {
+    mealName: meal.mealName, calories: meal.calories,
+    protein: meal.protein, carbs: meal.carbs, fat: meal.fat,
+    fiber: meal.fiber || 0, ingredients: meal.ingredients || [],
+    portionNote: meal.portionNote || "", confidence: meal.confidence || "medium",
+  } : null;
+  const [img,setImg]           = useState(meal?.imageData?{url:`data:${meal.imageType};base64,${meal.imageData}`,b64:meal.imageData,type:meal.imageType}:null);
+  const [desc,setDesc]         = useState(meal?.description || "");
+  const [status,setStatus]     = useState(meal?"review":"idle");
+  const [analysis,setAnalysis] = useState(initialAnalysis);
+  const [editCal,setEditCal]   = useState(meal?String(Math.round(meal.calories)):"");
   const [err,setErr]           = useState("");
   const fileRef = useRef();
   const provColor = provider==="openai"?C.oai:C.accent;
@@ -193,7 +206,8 @@ function AddView({ settings, onAdd, onCancel }) {
 
   const log = () => {
     if (!analysis) return;
-    onAdd({ id:Date.now(), date:todayStr(), timestamp:new Date().toISOString(),
+    onSave({ id:meal?.id||Date.now(), date:meal?.date||todayStr(), timestamp:meal?.timestamp||new Date().toISOString(),
+      updatedAt:isEditing?new Date().toISOString():undefined,
       description:desc.trim(), provider,
       imageData:img?.b64||null, imageType:img?.type||null,
       mealName:analysis.mealName,
@@ -211,7 +225,7 @@ function AddView({ settings, onAdd, onCancel }) {
       <div style={{padding:"16px 16px 12px",flexShrink:0,borderBottom:`1px solid ${C.border}`}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <button onClick={onCancel} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22,minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center"}}>←</button>
-          <span style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:C.text,flex:1}}>Add Meal</span>
+          <span style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:C.text,flex:1}}>{isEditing?"Edit Meal":"Add Meal"}</span>
           <span style={{fontSize:10,color:provColor,background:provider==="openai"?"rgba(116,170,156,.12)":"rgba(201,168,76,.12)",padding:"4px 10px",borderRadius:20,border:`1px solid ${provColor}`,letterSpacing:".06em",textTransform:"uppercase",fontWeight:600}}>
             {provider==="openai"?"GPT-4o":"Claude"}
           </span>
@@ -275,10 +289,10 @@ function AddView({ settings, onAdd, onCancel }) {
           </button>
         ):(
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setStatus("idle");setAnalysis(null);}}
+            <button onClick={analyze}
               style={{flex:1,padding:16,background:"none",border:`1px solid ${C.muted}`,borderRadius:14,fontSize:14,color:C.muted,cursor:"pointer",minHeight:54}}>Re-analyze</button>
             <button onClick={log}
-              style={{flex:2,padding:16,background:provColor,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"#0c1a10",cursor:"pointer",minHeight:54}}>Log Meal ✓</button>
+              style={{flex:2,padding:16,background:provColor,border:"none",borderRadius:14,fontSize:15,fontWeight:700,color:"#0c1a10",cursor:"pointer",minHeight:54}}>{isEditing?"Save Meal ✓":"Log Meal ✓"}</button>
           </div>
         )}
       </div>
@@ -287,7 +301,7 @@ function AddView({ settings, onAdd, onCancel }) {
 }
 
 /* ── Today View ── */
-function TodayView({ meals, onDelete, onSettings }) {
+function TodayView({ meals, onDelete, onEdit, onSettings }) {
   const today  = meals.filter(m=>m.date===todayStr());
   const cal    = sumKey(today,"calories"), protein=sumKey(today,"protein");
   const carbs  = sumKey(today,"carbs"),   fat=sumKey(today,"fat");
@@ -316,7 +330,7 @@ function TodayView({ meals, onDelete, onSettings }) {
           </span>
           {today.length>0&&<span style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{protein.toFixed(0)}P·{carbs.toFixed(0)}C·{fat.toFixed(0)}F</span>}
         </div>
-        {sorted.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete}/>)}
+        {sorted.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete} onEdit={onEdit}/>)}
         {today.length===0&&(
           <div style={{textAlign:"center",paddingTop:36,color:C.muted}}>
             <div style={{fontSize:36,marginBottom:10}}>🍽</div>
@@ -329,7 +343,7 @@ function TodayView({ meals, onDelete, onSettings }) {
 }
 
 /* ── History View ── */
-function HistView({ meals, onDelete }) {
+function HistView({ meals, onDelete, onEdit }) {
   const groups = groupByDate(meals);
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -358,7 +372,7 @@ function HistView({ meals, onDelete }) {
               <div style={{height:2,background:C.card,borderRadius:1,marginBottom:8}}>
                 <div style={{height:"100%",width:`${Math.min((cal/DAILY_CAL)*100,100)}%`,background:over?C.danger:C.accent,borderRadius:1}}/>
               </div>
-              {sortedDayMeals.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete}/>)}
+              {sortedDayMeals.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete} onEdit={onEdit}/>)}
             </div>
           );
         })}
@@ -450,6 +464,8 @@ export default function App() {
   const [settings,setSettings] = useState({ provider:"anthropic", oaiKey:"" });
   const [ready,   setReady]    = useState(false);
   const [view,    setView]     = useState("today");
+  const [editingMeal,setEditingMeal] = useState(null);
+  const [editReturnView,setEditReturnView] = useState("today");
 
   useEffect(() => {
     Promise.all([loadMeals(), loadSettings()]).then(([m,s]) => {
@@ -460,6 +476,9 @@ export default function App() {
   }, []);
 
   const addMeal      = async meal => { const u=[meal,...meals]; setMeals(u); await saveMeals(u); setView("today"); };
+  const updateMeal   = async meal => { const u=meals.map(m=>m.id===meal.id?meal:m); setMeals(u); await saveMeals(u); setEditingMeal(null); setView(editReturnView); };
+  const saveMeal     = meal => editingMeal ? updateMeal(meal) : addMeal(meal);
+  const editMeal     = meal => { setEditingMeal(meal); setEditReturnView(view); setView("add"); };
   const deleteMeal   = async id   => { const u=meals.filter(m=>m.id!==id); setMeals(u); await saveMeals(u); };
   const updateSettings = async s  => { setSettings(s); await saveSettings(s); };
 
@@ -487,17 +506,17 @@ export default function App() {
       `}</style>
       <div style={{background:C.bg,height:"100%",maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',sans-serif",color:C.text,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         <div style={{flex:1,overflow:"hidden"}}>
-          {view==="add"      ?<AddView  settings={settings} onAdd={addMeal} onCancel={()=>setView("today")}/>:
+          {view==="add"      ?<AddView key={editingMeal?.id||"new"} settings={settings} meal={editingMeal} onSave={saveMeal} onCancel={()=>{setEditingMeal(null);setView(editingMeal?editReturnView:"today");}}/>:
            view==="settings" ?<SettView settings={settings} onSave={s=>{updateSettings(s);setView("today");}} onBack={()=>setView("today")}/>:
-           view==="history"  ?<HistView meals={meals} onDelete={deleteMeal}/>:
-                              <TodayView meals={meals} onDelete={deleteMeal} onSettings={()=>setView("settings")}/>}
+           view==="history"  ?<HistView meals={meals} onDelete={deleteMeal} onEdit={editMeal}/>:
+                              <TodayView meals={meals} onDelete={deleteMeal} onEdit={editMeal} onSettings={()=>setView("settings")}/>}
         </div>
         {view!=="add"&&view!=="settings"&&(
           <div style={{flexShrink:0,display:"flex",background:"rgba(12,26,16,.97)",borderTop:`1px solid ${C.border}`}}>
             {NAV.map(item=>{
               const isAdd=item.key==="add",active=view===item.key;
               return (
-                <button key={item.key} onClick={()=>setView(item.key)}
+                <button key={item.key} onClick={()=>{setEditingMeal(null);setView(item.key);}}
                   style={{flex:1,padding:isAdd?"8px 0 14px":"12px 0 14px",background:isAdd?navAccent:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,color:isAdd?"#0c1a10":active?navAccent:C.muted,transition:"color .2s",minHeight:52}}>
                   <span style={{fontSize:isAdd?24:16,lineHeight:1}}>{item.icon}</span>
                   <span style={{fontSize:9,textTransform:"uppercase",letterSpacing:".12em",fontWeight:500}}>{item.label}</span>

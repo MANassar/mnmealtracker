@@ -244,7 +244,7 @@ function MBar({ label, value, max, color }) {
 }
 
 /* ── MealCard ───────────────────────────────────────────── */
-function MealCard({ meal, onDelete }) {
+function MealCard({ meal, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
   const pc   = meal.provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
   const m3   = [['P', meal.protein, 'var(--mint)'], ['C', meal.carbs, 'var(--sky)'], ['F', meal.fat, 'var(--peach)']];
@@ -295,23 +295,46 @@ function MealCard({ meal, onDelete }) {
             <div style="font-size:11px;color:var(--muted);margin-top:8px">
               <span style="color:var(--accent)">Note:</span> ${meal.description}
             </div>` : null}
-          <button
-            onClick=${e => { e.stopPropagation(); if (confirm('Delete this meal?')) onDelete(meal.id); }}
-            style="margin-top:12px;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:8px;padding:0 14px;font-size:11px;cursor:pointer;height:38px">
-            Delete entry
-          </button>
+          <div style="display:flex;gap:10px;margin-top:12px">
+            <button
+              onClick=${e => { e.stopPropagation(); onEdit(meal); }}
+              style="flex:1;background:none;border:1px solid ${pc};color:${pc};border-radius:8px;padding:0 14px;font-size:11px;cursor:pointer;height:38px">
+              Modify / re-analyze
+            </button>
+            <button
+              onClick=${e => { e.stopPropagation(); if (confirm('Delete this meal?')) onDelete(meal.id); }}
+              style="background:none;border:1px solid var(--danger);color:var(--danger);border-radius:8px;padding:0 14px;font-size:11px;cursor:pointer;height:38px">
+              Delete
+            </button>
+          </div>
         </div>` : null}
     </div>`;
 }
 
 /* ── Add Meal View ──────────────────────────────────────── */
-function AddView({ settings, onAdd, onCancel }) {
+function AddView({ settings, meal, onSave, onCancel }) {
   const { provider = 'anthropic', anthropicKey = '', oaiKey = '' } = settings;
-  const [img,      setImg]      = useState(null);
-  const [desc,     setDesc]     = useState('');
-  const [status,   setStatus]   = useState('idle');
-  const [analysis, setAnalysis] = useState(null);
-  const [editCal,  setEditCal]  = useState('');
+  const isEditing = Boolean(meal);
+  const initialAnalysis = meal ? {
+    mealName: meal.mealName,
+    calories: meal.calories,
+    protein: meal.protein,
+    carbs: meal.carbs,
+    fat: meal.fat,
+    fiber: meal.fiber || 0,
+    ingredients: meal.ingredients || [],
+    portionNote: meal.portionNote || '',
+    confidence: meal.confidence || 'medium',
+  } : null;
+  const [img,      setImg]      = useState(meal?.imageData ? {
+    url: `data:${meal.imageType};base64,${meal.imageData}`,
+    b64: meal.imageData,
+    type: meal.imageType,
+  } : null);
+  const [desc,     setDesc]     = useState(meal?.description || '');
+  const [status,   setStatus]   = useState(meal ? 'review' : 'idle');
+  const [analysis, setAnalysis] = useState(initialAnalysis);
+  const [editCal,  setEditCal]  = useState(meal ? String(Math.round(meal.calories)) : '');
   const [err,      setErr]      = useState('');
   const fileRef = useRef();
   const pc = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
@@ -339,8 +362,11 @@ function AddView({ settings, onAdd, onCancel }) {
 
   const log = () => {
     if (!analysis) return;
-    onAdd({
-      id: Date.now(), date: todayStr(), timestamp: new Date().toISOString(),
+    onSave({
+      id: meal?.id || Date.now(),
+      date: meal?.date || todayStr(),
+      timestamp: meal?.timestamp || new Date().toISOString(),
+      updatedAt: isEditing ? new Date().toISOString() : undefined,
       description: desc.trim(), provider,
       imageData: img?.b64 || null, imageType: img?.type || null,
       mealName:    analysis.mealName,
@@ -360,7 +386,7 @@ function AddView({ settings, onAdd, onCancel }) {
         <div style="display:flex;align-items:center;gap:12px">
           <button onClick=${onCancel}
             style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">←</button>
-          <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text);flex:1">Add Meal</span>
+          <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text);flex:1">${isEditing ? 'Edit Meal' : 'Add Meal'}</span>
           <span style="font-size:10px;color:${pc};background:${provider === 'openai' ? 'rgba(116,170,156,.12)' : 'rgba(201,168,76,.12)'};padding:4px 10px;border-radius:20px;border:1px solid ${pc};letter-spacing:.06em;text-transform:uppercase;font-weight:600">
             ${provider === 'openai' ? 'GPT-4o' : 'Claude'}
           </span>
@@ -433,13 +459,13 @@ function AddView({ settings, onAdd, onCancel }) {
             ${status === 'analyzing' ? 'Analyzing…' : 'Analyze Meal'}
           </button>` : html`
           <div style="display:flex;gap:10px">
-            <button onClick=${() => { setStatus('idle'); setAnalysis(null); }}
+            <button onClick=${analyze}
               style="flex:1;padding:16px;background:none;border:1px solid var(--muted);border-radius:14px;font-size:14px;color:var(--muted);cursor:pointer;min-height:54px">
               Re-analyze
             </button>
             <button onClick=${log}
               style="flex:2;padding:16px;background:${pc};border:none;border-radius:14px;font-size:15px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:54px">
-              Log Meal ✓
+              ${isEditing ? 'Save Meal ✓' : 'Log Meal ✓'}
             </button>
           </div>`}
       </div>
@@ -447,7 +473,7 @@ function AddView({ settings, onAdd, onCancel }) {
 }
 
 /* ── Today View ─────────────────────────────────────────── */
-function TodayView({ meals, onDelete, onSettings }) {
+function TodayView({ meals, onDelete, onEdit, onSettings }) {
   const today   = meals.filter(m => m.date === todayStr());
   const cal     = sum(today, 'calories'), protein = sum(today, 'protein');
   const carbs   = sum(today, 'carbs'),    fat     = sum(today, 'fat');
@@ -482,7 +508,7 @@ function TodayView({ meals, onDelete, onSettings }) {
               ${protein.toFixed(0)}P·${carbs.toFixed(0)}C·${fat.toFixed(0)}F
             </span>` : null}
         </div>
-        ${sorted.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete}/>`)}
+        ${sorted.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
         ${today.length === 0 ? html`
           <div style="text-align:center;padding-top:36px;color:var(--muted)">
             <div style="font-size:36px;margin-bottom:10px">🍽</div>
@@ -493,7 +519,7 @@ function TodayView({ meals, onDelete, onSettings }) {
 }
 
 /* ── History View ───────────────────────────────────────── */
-function HistView({ meals, onDelete }) {
+function HistView({ meals, onDelete, onEdit }) {
   const groups = groupByDate(meals);
   return html`
     <div style="display:flex;flex-direction:column;height:100%">
@@ -525,7 +551,7 @@ function HistView({ meals, onDelete }) {
               <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
                 <div style="height:100%;width:${Math.min((cal / DAILY_CAL) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
               </div>
-              ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete}/>`)}
+              ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
             </div>`;
         })}
       </div>
@@ -657,6 +683,8 @@ function App() {
   const [meals,   setMeals]    = useState(() => loadMeals());
   const [settings,setSettings] = useState(() => ({ provider:'anthropic', anthropicKey:'', oaiKey:'', theme:'auto', ...stored }));
   const [view,    setView]     = useState('today');
+  const [editingMeal, setEditingMeal] = useState(null);
+  const [editReturnView, setEditReturnView] = useState('today');
 
   useEffect(() => {
     applyTheme(settings.theme);
@@ -673,6 +701,12 @@ function App() {
   const addMeal = meal => {
     const u = [meal, ...meals]; setMeals(u); saveMeals(u); setView('today');
   };
+  const updateMeal = meal => {
+    const u = meals.map(m => m.id === meal.id ? meal : m);
+    setMeals(u); saveMeals(u); setEditingMeal(null); setView(editReturnView);
+  };
+  const saveMeal = meal => editingMeal ? updateMeal(meal) : addMeal(meal);
+  const editMeal = meal => { setEditingMeal(meal); setEditReturnView(view); setView('add'); };
   const deleteMeal = id => {
     const u = meals.filter(m => m.id !== id); setMeals(u); saveMeals(u);
   };
@@ -689,10 +723,10 @@ function App() {
   return html`
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg)">
       <div style="flex:1;overflow:hidden">
-        ${view === 'add'      ? html`<${AddView}  settings=${settings} onAdd=${addMeal}  onCancel=${() => setView('today')}/>` :
+        ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
           view === 'settings' ? html`<${SettView} settings=${settings} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')}/>` :
-          view === 'history'  ? html`<${HistView} meals=${meals} onDelete=${deleteMeal}/>` :
-                                html`<${TodayView} meals=${meals} onDelete=${deleteMeal} onSettings=${() => setView('settings')}/>`}
+          view === 'history'  ? html`<${HistView} meals=${meals} onDelete=${deleteMeal} onEdit=${editMeal}/>` :
+                                html`<${TodayView} meals=${meals} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 
       ${view !== 'add' && view !== 'settings' ? html`
@@ -701,7 +735,7 @@ function App() {
             const isAdd  = item.key === 'add';
             const active = view === item.key;
             return html`
-              <button key=${item.key} onClick=${() => setView(item.key)}
+              <button key=${item.key} onClick=${() => { setEditingMeal(null); setView(item.key); }}
                 style="flex:1;padding:${isAdd ? '8px 0 14px' : '12px 0 14px'};
                        background:${isAdd ? navAccent : 'none'};
                        border:none;cursor:pointer;
