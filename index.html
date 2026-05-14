@@ -130,10 +130,10 @@ const { useState, useRef, useEffect } = window.preactHooks;
 const html = window.htm.bind(h);
 
 /* ── Constants ─────────────────────────────────────────── */
-const DAILY_CAL   = 1800;
 const MEALS_KEY   = 'mt_meals_v1';
 const SETT_KEY    = 'mt_settings_v1';
 const APP_VERSION = window.APP_VERSION || '0.1.1';
+const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
 
 /* ── Storage ────────────────────────────────────────────── */
 const loadMeals    = () => { try { return JSON.parse(localStorage.getItem(MEALS_KEY) || '[]'); } catch { return []; } };
@@ -147,6 +147,16 @@ const fmtTime     = ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit',
 const fmtDate     = ds => new Date(ds + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 const sum         = (arr, k) => arr.reduce((a, m) => a + (parseFloat(m[k]) || 0), 0);
 const fileToB64   = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+const asPositiveNumber = (value, fallback) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const normalizeTargets = settings => ({
+  calories: asPositiveNumber(settings?.targets?.calories, DEFAULT_TARGETS.calories),
+  protein:  asPositiveNumber(settings?.targets?.protein,  DEFAULT_TARGETS.protein),
+  carbs:    asPositiveNumber(settings?.targets?.carbs,    DEFAULT_TARGETS.carbs),
+  fat:      asPositiveNumber(settings?.targets?.fat,      DEFAULT_TARGETS.fat),
+});
 const groupByDate = meals => {
   const g = {};
   meals.forEach(m => { (g[m.date] = g[m.date] || []).push(m); });
@@ -479,11 +489,11 @@ function AddView({ settings, meal, onSave, onCancel }) {
 }
 
 /* ── Today View ─────────────────────────────────────────── */
-function TodayView({ meals, onDelete, onEdit, onSettings }) {
+function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
   const today   = meals.filter(m => m.date === todayStr());
   const cal     = sum(today, 'calories'), protein = sum(today, 'protein');
   const carbs   = sum(today, 'carbs'),    fat     = sum(today, 'fat');
-  const rem     = DAILY_CAL - cal;
+  const rem     = targets.calories - cal;
   const sorted  = [...today].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const label   = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
   return html`
@@ -496,15 +506,15 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
       <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
         <div style="min-height:calc(100% + 1px)">
           <div style="display:flex;justify-content:center;padding:16px 0 12px">
-            <${Ring} consumed=${Math.round(cal)} target=${DAILY_CAL}/>
+            <${Ring} consumed=${Math.round(cal)} target=${targets.calories}/>
           </div>
           <div style="text-align:center;font-size:12px;font-family:'DM Mono',monospace;margin-bottom:18px;color:${rem >= 0 ? 'var(--mint)' : 'var(--danger)'}">
             ${rem >= 0 ? `${Math.round(rem)} kcal remaining` : `${Math.abs(Math.round(rem))} kcal over target`}
           </div>
           <div style="display:flex;gap:14px;margin-bottom:24px">
-            <${MBar} label="Protein" value=${protein} max=${150} color="var(--mint)"/>
-            <${MBar} label="Carbs"   value=${carbs}   max=${180} color="var(--sky)"/>
-            <${MBar} label="Fat"     value=${fat}      max=${60}  color="var(--peach)"/>
+            <${MBar} label="Protein" value=${protein} max=${targets.protein} color="var(--mint)"/>
+            <${MBar} label="Carbs"   value=${carbs}   max=${targets.carbs} color="var(--sky)"/>
+            <${MBar} label="Fat"     value=${fat}      max=${targets.fat}  color="var(--peach)"/>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
             <span style="font-family:'Playfair Display',serif;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">
@@ -527,7 +537,7 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
 }
 
 /* ── History View ───────────────────────────────────────── */
-function HistView({ meals, onDelete, onEdit }) {
+function HistView({ meals, targets, onDelete, onEdit }) {
   const groups = groupByDate(meals);
   return html`
     <div style="display:flex;flex-direction:column;height:100%;min-height:0">
@@ -541,7 +551,7 @@ function HistView({ meals, onDelete, onEdit }) {
           ${groups.map(([date, dayMeals]) => {
             const cal = sum(dayMeals, 'calories'), p = sum(dayMeals, 'protein');
             const c   = sum(dayMeals, 'carbs'),    f = sum(dayMeals, 'fat');
-            const over = cal > DAILY_CAL;
+            const over = cal > targets.calories;
             const sortedDayMeals = [...dayMeals].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             return html`
               <div key=${date} style="margin-bottom:24px">
@@ -558,7 +568,7 @@ function HistView({ meals, onDelete, onEdit }) {
                   </div>
                 </div>
                 <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
-                  <div style="height:100%;width:${Math.min((cal / DAILY_CAL) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
+                  <div style="height:100%;width:${Math.min((cal / targets.calories) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
                 </div>
                 ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
               </div>
@@ -570,15 +580,30 @@ function HistView({ meals, onDelete, onEdit }) {
 }
 
 /* ── Settings View ──────────────────────────────────────── */
-function SettView({ settings, onSave, onBack }) {
+function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   const [provider,     setProvider]     = useState(settings.provider     || 'anthropic');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
   const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
   const [theme,        setTheme]        = useState(settings.theme        || 'auto');
+  const savedTargets = normalizeTargets(settings);
+  const [targetCal,     setTargetCal]     = useState(String(Math.round(savedTargets.calories)));
+  const [targetProtein, setTargetProtein] = useState(String(Math.round(savedTargets.protein)));
+  const [targetCarbs,   setTargetCarbs]   = useState(String(Math.round(savedTargets.carbs)));
+  const [targetFat,     setTargetFat]     = useState(String(Math.round(savedTargets.fat)));
   const [saved,        setSaved]        = useState(false);
+  const [importMsg,    setImportMsg]    = useState('');
+  const importRef = useRef();
 
   const save = () => {
-    onSave({ provider, anthropicKey, oaiKey, theme });
+    onSave({
+      provider, anthropicKey, oaiKey, theme,
+      targets: {
+        calories: asPositiveNumber(targetCal, DEFAULT_TARGETS.calories),
+        protein:  asPositiveNumber(targetProtein, DEFAULT_TARGETS.protein),
+        carbs:    asPositiveNumber(targetCarbs, DEFAULT_TARGETS.carbs),
+        fat:      asPositiveNumber(targetFat, DEFAULT_TARGETS.fat),
+      },
+    });
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
@@ -610,6 +635,32 @@ function SettView({ settings, onSave, onBack }) {
 
   const activeColor = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
 
+  const TargetInput = ({ label, value, onInput, color, unit }) => html`
+    <label style="display:block">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">${label}</div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:0 12px">
+        <input type="number" min="1" value=${value} onInput=${e => onInput(e.target.value)}
+          style="width:100%;background:transparent;border:none;color:${color};font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
+        <span style="font-size:11px;color:var(--muted)">${unit}</span>
+      </div>
+    </label>`;
+
+  const importMeals = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const importedMeals = Array.isArray(parsed) ? parsed : parsed.meals;
+      if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
+      const didImport = onImport(importedMeals);
+      setImportMsg(didImport ? `Imported ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.` : 'Import canceled.');
+    } catch (error) {
+      setImportMsg(`Import failed: ${error.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   return html`
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="padding:calc(var(--sat) + 14px) 16px 12px;flex-shrink:0;border-bottom:1px solid var(--border)">
@@ -635,6 +686,15 @@ function SettView({ settings, onSave, onBack }) {
           <${ThemeTab} id="auto"  label="Auto"/>
           <${ThemeTab} id="light" label="Light"/>
           <${ThemeTab} id="dark"  label="Dark"/>
+        </div>
+
+        <!-- Targets -->
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Daily Targets</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:22px">
+          <${TargetInput} label="Calories" value=${targetCal} onInput=${setTargetCal} color="var(--accent)" unit="kcal"/>
+          <${TargetInput} label="Protein"  value=${targetProtein} onInput=${setTargetProtein} color="var(--mint)" unit="g"/>
+          <${TargetInput} label="Carbs"    value=${targetCarbs} onInput=${setTargetCarbs} color="var(--sky)" unit="g"/>
+          <${TargetInput} label="Fat"      value=${targetFat} onInput=${setTargetFat} color="var(--peach)" unit="g"/>
         </div>
 
         <!-- Anthropic key -->
@@ -671,11 +731,22 @@ function SettView({ settings, onSave, onBack }) {
           ${saved ? 'Saved ✓' : 'Save Settings'}
         </button>
 
-        <!-- Info -->
+        <!-- Meal data -->
         <div style="font-size:12px;color:var(--muted);line-height:1.9;padding:14px;background:var(--card);border-radius:12px;margin-bottom:16px">
-          <div style="color:var(--text);font-weight:600;margin-bottom:8px">Daily Targets</div>
-          <div>Calories: <span style="color:var(--text)">${DAILY_CAL} kcal</span></div>
-          <div>Protein <span style="color:var(--mint)">150g</span> · Carbs <span style="color:var(--sky)">180g</span> · Fat <span style="color:var(--peach)">60g</span></div>
+          <div style="color:var(--text);font-weight:600;margin-bottom:8px">Meal Data</div>
+          <div style="display:flex;gap:10px;margin-bottom:8px">
+            <button onClick=${onExport}
+              style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer">
+              Export
+            </button>
+            <button onClick=${() => importRef.current?.click()}
+              style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer">
+              Import
+            </button>
+          </div>
+          <input ref=${importRef} type="file" accept="application/json,.json" onChange=${importMeals} style="display:none"/>
+          <div>${meals.length} meal${meals.length === 1 ? '' : 's'} stored</div>
+          ${importMsg ? html`<div style="color:${importMsg.startsWith('Import failed') ? 'var(--danger)' : 'var(--mint)'}">${importMsg}</div>` : null}
         </div>
 
         <div style="font-size:12px;color:var(--muted);padding:14px;background:var(--card);border-radius:12px;line-height:1.7">
@@ -722,6 +793,30 @@ function App() {
     const u = meals.filter(m => m.id !== id); setMeals(u); saveMeals(u);
   };
   const updateSettings = s => { setSettings(s); saveSettings(s); };
+  const targets = normalizeTargets(settings);
+  const exportMeals = () => {
+    const data = {
+      app: 'mnmealtracker',
+      version: APP_VERSION,
+      exportedAt: new Date().toISOString(),
+      meals,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `meal-tracker-meals-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const importMeals = importedMeals => {
+    if (!confirm(`Replace your current ${meals.length} meal${meals.length === 1 ? '' : 's'} with ${importedMeals.length} imported meal${importedMeals.length === 1 ? '' : 's'}?`)) return false;
+    setMeals(importedMeals);
+    saveMeals(importedMeals);
+    return true;
+  };
 
   const NAV = [
     { key: 'today',   icon: '◉', label: 'Today'   },
@@ -735,9 +830,9 @@ function App() {
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg)">
       <div style="flex:1;overflow:hidden;min-height:0">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
-          view === 'settings' ? html`<${SettView} settings=${settings} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')}/>` :
-          view === 'history'  ? html`<${HistView} meals=${meals} onDelete=${deleteMeal} onEdit=${editMeal}/>` :
-                                html`<${TodayView} meals=${meals} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
+          view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals}/>` :
+          view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal}/>` :
+                                html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 
       ${view !== 'add' && view !== 'settings' ? html`
