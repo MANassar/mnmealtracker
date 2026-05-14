@@ -77,12 +77,16 @@ const groupByDate = meals => {
 
 /* ── API ────────────────────────────────────────────────── */
 const PROMPT = desc =>
-`You are a clinical nutritionist. Analyze the food in the image.${desc ? ` User context: "${desc}"` : ''}
+`You are a clinical nutritionist. Analyze the food from the image, description, or both.${desc ? ` User context: "${desc}"` : ''}
 Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note"}
 Calories in kcal. Macros in grams. Do not underestimate portions.`;
 
 async function callAnthropic(img, desc, key) {
+  const content = [
+    ...(img ? [{ type: 'image', source: { type: 'base64', media_type: img.type, data: img.b64 } }] : []),
+    { type: 'text', text: PROMPT(desc) },
+  ];
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -93,10 +97,7 @@ async function callAnthropic(img, desc, key) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514', max_tokens: 1000,
-      messages: [{ role: 'user', content: [
-        { type: 'image', source: { type: 'base64', media_type: img.type, data: img.b64 } },
-        { type: 'text',  text: PROMPT(desc) },
-      ]}],
+      messages: [{ role: 'user', content }],
     }),
   });
   const d = await res.json();
@@ -105,15 +106,16 @@ async function callAnthropic(img, desc, key) {
 }
 
 async function callOpenAI(img, desc, key) {
+  const content = [
+    ...(img ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }] : []),
+    { type: 'text', text: PROMPT(desc) },
+  ];
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
     body: JSON.stringify({
       model: 'gpt-4o', max_tokens: 1000,
-      messages: [{ role: 'user', content: [
-        { type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } },
-        { type: 'text',      text: PROMPT(desc) },
-      ]}],
+      messages: [{ role: 'user', content }],
     }),
   });
   const d = await res.json();
@@ -240,14 +242,15 @@ function AddView({ settings, onAdd, onCancel }) {
   };
 
   const analyze = async () => {
-    if (!img) { setErr('Please add a photo first.'); return; }
+    const trimmedDesc = desc.trim();
+    if (!img && !trimmedDesc) { setErr('Please add a photo, a description, or both.'); return; }
     const key = provider === 'openai' ? oaiKey : anthropicKey;
     if (!key) { setErr(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} key missing — add it in Settings.`); return; }
     setStatus('analyzing'); setErr('');
     try {
       const raw = provider === 'openai'
-        ? await callOpenAI(img, desc, key)
-        : await callAnthropic(img, desc, key);
+        ? await callOpenAI(img, trimmedDesc, key)
+        : await callAnthropic(img, trimmedDesc, key);
       const parsed = JSON.parse(raw.replace(/```json|```/gi, '').trim());
       setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
     } catch (e) { setErr(`Analysis failed: ${e.message}`); setStatus('error'); }
@@ -257,7 +260,7 @@ function AddView({ settings, onAdd, onCancel }) {
     if (!analysis) return;
     onAdd({
       id: Date.now(), date: todayStr(), timestamp: new Date().toISOString(),
-      description: desc, provider,
+      description: desc.trim(), provider,
       imageData: img?.b64 || null, imageType: img?.type || null,
       mealName:    analysis.mealName,
       calories:    parseInt(editCal) || analysis.calories,
@@ -300,14 +303,14 @@ function AddView({ settings, onAdd, onCancel }) {
             <div style="text-align:center;color:var(--muted);padding:20px">
               <div style="font-size:42px;margin-bottom:8px">📷</div>
               <div style="font-size:15px;font-weight:500">Add a photo</div>
-              <div style="font-size:12px;margin-top:3px">camera or gallery</div>
+              <div style="font-size:12px;margin-top:3px">optional if you describe the meal</div>
             </div>`}
         </div>
         <input ref=${fileRef} type="file" accept="image/*" onChange=${pick} style="display:none"/>
 
         <!-- Description -->
         <textarea value=${desc} onInput=${e => setDesc(e.target.value)}
-          placeholder="Optional: portions, key ingredients, restaurant name…" rows="3"
+          placeholder="Describe the meal, portions, ingredients, or restaurant…" rows="3"
           style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;resize:none;margin-bottom:12px;font-family:'DM Sans',sans-serif;box-sizing:border-box"></textarea>
 
         <!-- Error -->
@@ -345,7 +348,7 @@ function AddView({ settings, onAdd, onCancel }) {
       <div style="padding:10px 16px calc(var(--sab) + 10px);border-top:1px solid var(--border);flex-shrink:0">
         ${status !== 'review' ? html`
           <button onClick=${analyze}
-            style="width:100%;padding:16px;background:${!img ? 'var(--muted)' : pc};border:none;border-radius:14px;font-size:15px;font-weight:700;color:${!img ? 'var(--surface)' : '#0c1a10'};cursor:${!img || status === 'analyzing' ? 'not-allowed' : 'pointer'};min-height:54px;opacity:${status === 'analyzing' ? .7 : 1}">
+            style="width:100%;padding:16px;background:${!img && !desc.trim() ? 'var(--muted)' : pc};border:none;border-radius:14px;font-size:15px;font-weight:700;color:${!img && !desc.trim() ? 'var(--surface)' : '#0c1a10'};cursor:${!img && !desc.trim() || status === 'analyzing' ? 'not-allowed' : 'pointer'};min-height:54px;opacity:${status === 'analyzing' ? .7 : 1}">
             ${status === 'analyzing' ? 'Analyzing…' : 'Analyze Meal'}
           </button>` : html`
           <div style="display:flex;gap:10px">
