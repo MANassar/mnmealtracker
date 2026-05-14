@@ -97,13 +97,21 @@
       bottom: 0;
       z-index: 20;
       height: calc(var(--tab-h) + var(--sab));
-      padding-bottom: var(--sab);
       display: flex;
       align-items: stretch;
       background: var(--nav-bg);
       border-top: 1px solid var(--border);
       box-shadow: 0 -8px 20px rgba(0,0,0,.18);
       transform: translateZ(0);
+    }
+    .tabbar::after {
+      content: "";
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: -40px;
+      height: 40px;
+      background: var(--nav-bg);
     }
     a { color: var(--oai); text-decoration: none; }
   </style>
@@ -556,6 +564,7 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
 function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
   const groups = groupByDate(meals);
   const [importMsg, setImportMsg] = useState('');
+  const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const importRef = useRef();
   const importMeals = async e => {
     const file = e.target.files?.[0];
@@ -577,9 +586,16 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
     }
   };
   const chooseDataAction = () => {
-    const action = prompt('Type export or import', 'export')?.trim().toLowerCase();
-    if (action === 'export') onExport();
-    if (action === 'import') importRef.current?.click();
+    setDataMenuOpen(true);
+  };
+  const menuButtonStyle = "width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;text-align:left";
+  const exportFromMenu = () => {
+    setDataMenuOpen(false);
+    onExport();
+  };
+  const importFromMenu = () => {
+    setDataMenuOpen(false);
+    importRef.current?.click();
   };
 
   return html`
@@ -589,10 +605,18 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
           <div style="font-family:'Playfair Display',serif;font-size:24px;color:var(--text);flex:1">History</div>
           <button onClick=${chooseDataAction}
             style="background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:0 12px;height:38px;font-size:12px;font-weight:600;cursor:pointer">
-            Data
+            Meal Data
           </button>
           <input ref=${importRef} type="file" accept="application/json,.json" onChange=${importMeals} style="display:none"/>
         </div>
+        ${dataMenuOpen ? html`
+          <div style="position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.25);display:flex;align-items:flex-start;justify-content:flex-end;padding:calc(var(--sat) + 58px) 16px 0">
+            <div style="width:min(220px,calc(100vw - 32px));background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;box-shadow:0 14px 34px rgba(0,0,0,.28)">
+              <button onClick=${importFromMenu} style=${menuButtonStyle}>Import</button>
+              <button onClick=${exportFromMenu} style="${menuButtonStyle};margin-top:8px">Export</button>
+              <button onClick=${() => setDataMenuOpen(false)} style="${menuButtonStyle};margin-top:8px;color:var(--muted)">Cancel</button>
+            </div>
+          </div>` : null}
         ${importMsg ? html`
           <div style="font-size:11px;margin-top:8px;color:${importMsg.startsWith('Import failed') ? 'var(--danger)' : importMsg === 'Import canceled.' ? 'var(--muted)' : 'var(--mint)'}">
             ${importMsg}
@@ -913,12 +937,12 @@ function App() {
             const active = view === item.key;
             return html`
               <button key=${item.key} onClick=${() => { setEditingMeal(null); setView(item.key); }}
-                style="flex:1;padding:${isAdd ? '8px 0 14px' : '12px 0 14px'};
+                style="flex:1;padding:${isAdd ? '8px 0 calc(var(--sab) + 14px)' : '12px 0 calc(var(--sab) + 14px)'};
                        background:${isAdd ? navAccent : active ? 'rgba(201,168,76,.12)' : 'none'};
                        border:none;cursor:pointer;
                        display:flex;flex-direction:column;align-items:center;gap:4px;
                        color:${isAdd ? '#0c1a10' : active ? navAccent : 'var(--muted)'};
-                       transition:color .2s, background .2s;min-height:52px">
+                       transition:color .2s, background .2s;min-height:calc(var(--tab-h) + var(--sab));position:relative;z-index:1">
                 <span style="font-size:${isAdd ? '24px' : '16px'};line-height:1">${item.icon}</span>
                 <span style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;font-weight:${active || isAdd ? 700 : 500}">${item.label}</span>
                 ${active && !isAdd ? html`<span style="width:18px;height:2px;background:${navAccent};border-radius:2px;margin-top:1px"></span>` : null}
