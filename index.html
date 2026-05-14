@@ -27,8 +27,49 @@
       --muted:   #556358;
       --danger:  #d46a5a;
       --oai:     #74aa9c;
+      --nav-bg:  rgba(12,26,16,.97);
       --sat: env(safe-area-inset-top, 0px);
       --sab: env(safe-area-inset-bottom, 0px);
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg:      #f7f4ec;
+      --surface: #fffaf0;
+      --card:    #ffffff;
+      --border:  rgba(24,40,28,0.12);
+      --accent:  #9f7b19;
+      --mint:    #2f8a48;
+      --sky:     #3c76ad;
+      --peach:   #b85f3c;
+      --plum:    #8153a6;
+      --text:    #152018;
+      --muted:   #667268;
+      --danger:  #b94f40;
+      --oai:     #3c8277;
+      --nav-bg:  rgba(247,244,236,.97);
+      color-scheme: light;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg:      #f7f4ec;
+        --surface: #fffaf0;
+        --card:    #ffffff;
+        --border:  rgba(24,40,28,0.12);
+        --accent:  #9f7b19;
+        --mint:    #2f8a48;
+        --sky:     #3c76ad;
+        --peach:   #b85f3c;
+        --plum:    #8153a6;
+        --text:    #152018;
+        --muted:   #667268;
+        --danger:  #b94f40;
+        --oai:     #3c8277;
+        --nav-bg:  rgba(247,244,236,.97);
+        color-scheme: light;
+      }
     }
     *, *::before, *::after {
       box-sizing: border-box; margin: 0; padding: 0;
@@ -54,6 +95,7 @@
 <script src="./preact.umd.js"></script>
 <script src="./preact-hooks.umd.js"></script>
 <script src="./htm.umd.js"></script>
+<script src="./version.js"></script>
 <script>
 function showBootError(error) {
   const root = document.getElementById('root');
@@ -78,13 +120,14 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 const { h, render } = window.preact;
-const { useState, useRef } = window.preactHooks;
+const { useState, useRef, useEffect } = window.preactHooks;
 const html = window.htm.bind(h);
 
 /* ── Constants ─────────────────────────────────────────── */
 const DAILY_CAL   = 1800;
 const MEALS_KEY   = 'mt_meals_v1';
 const SETT_KEY    = 'mt_settings_v1';
+const APP_VERSION = window.APP_VERSION || '0.1.1';
 
 /* ── Storage ────────────────────────────────────────────── */
 const loadMeals    = () => { try { return JSON.parse(localStorage.getItem(MEALS_KEY) || '[]'); } catch { return []; } };
@@ -103,6 +146,15 @@ const groupByDate = meals => {
   meals.forEach(m => { (g[m.date] = g[m.date] || []).push(m); });
   return Object.entries(g).sort(([a], [b]) => b.localeCompare(a));
 };
+const themeMeta = document.querySelector('meta[name="theme-color"]');
+const applyTheme = theme => {
+  const mode = theme === 'light' || theme === 'dark' ? theme : 'auto';
+  if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.dataset.theme = mode;
+  const prefersLight = window.matchMedia?.('(prefers-color-scheme: light)').matches;
+  themeMeta?.setAttribute('content', mode === 'light' || (mode === 'auto' && prefersLight) ? '#f7f4ec' : '#0c1a10');
+};
+applyTheme(loadSettings().theme);
 
 /* ── API ────────────────────────────────────────────────── */
 const PROMPT = desc =>
@@ -480,10 +532,11 @@ function SettView({ settings, onSave, onBack }) {
   const [provider,     setProvider]     = useState(settings.provider     || 'anthropic');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
   const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
+  const [theme,        setTheme]        = useState(settings.theme        || 'auto');
   const [saved,        setSaved]        = useState(false);
 
   const save = () => {
-    onSave({ provider, anthropicKey, oaiKey });
+    onSave({ provider, anthropicKey, oaiKey, theme });
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
@@ -499,13 +552,27 @@ function SettView({ settings, onSave, onBack }) {
       </button>`;
   };
 
+  const ThemeTab = ({ id, label }) => {
+    const active = theme === id;
+    return html`
+      <button onClick=${() => { setTheme(id); applyTheme(id); }}
+        style="flex:1;padding:12px 8px;border-radius:10px;border:1px solid ${active ? activeColor : 'var(--border)'};background:${active ? 'rgba(201,168,76,.1)' : 'none'};cursor:pointer;text-align:center;transition:all .2s;color:${active ? activeColor : 'var(--muted)'};font-size:13px;font-weight:600">
+        ${label}
+      </button>`;
+  };
+
+  const back = () => {
+    applyTheme(settings.theme);
+    onBack();
+  };
+
   const activeColor = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="padding:calc(var(--sat) + 14px) 16px 12px;flex-shrink:0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:12px">
-          <button onClick=${onBack}
+          <button onClick=${back}
             style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">←</button>
           <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text)">Settings</span>
         </div>
@@ -518,6 +585,14 @@ function SettView({ settings, onSave, onBack }) {
         <div style="display:flex;gap:10px;margin-bottom:22px">
           <${ProvTab} id="anthropic" label="Anthropic" sub="Claude Sonnet 4"/>
           <${ProvTab} id="openai"    label="OpenAI"    sub="GPT-4o"/>
+        </div>
+
+        <!-- Appearance selector -->
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Appearance</div>
+        <div style="display:flex;gap:10px;margin-bottom:22px">
+          <${ThemeTab} id="auto"  label="Auto"/>
+          <${ThemeTab} id="light" label="Light"/>
+          <${ThemeTab} id="dark"  label="Dark"/>
         </div>
 
         <!-- Anthropic key -->
@@ -565,6 +640,7 @@ function SettView({ settings, onSave, onBack }) {
           <div style="color:var(--text);font-weight:600;margin-bottom:6px">📱 Install as app</div>
           <div><strong style="color:var(--text)">iOS Safari:</strong> Share → Add to Home Screen</div>
           <div><strong style="color:var(--text)">Android Chrome:</strong> ⋮ → Add to Home Screen</div>
+          <div style="margin-top:8px;color:var(--muted);font-family:'DM Mono',monospace">Version ${APP_VERSION}</div>
         </div>
       </div>
     </div>`;
@@ -574,8 +650,20 @@ function SettView({ settings, onSave, onBack }) {
 function App() {
   const stored  = loadSettings();
   const [meals,   setMeals]    = useState(() => loadMeals());
-  const [settings,setSettings] = useState(() => ({ provider:'anthropic', anthropicKey:'', oaiKey:'', ...stored }));
+  const [settings,setSettings] = useState(() => ({ provider:'anthropic', anthropicKey:'', oaiKey:'', theme:'auto', ...stored }));
   const [view,    setView]     = useState('today');
+
+  useEffect(() => {
+    applyTheme(settings.theme);
+    const mq = window.matchMedia?.('(prefers-color-scheme: light)');
+    const onChange = () => applyTheme(settings.theme);
+    mq?.addEventListener?.('change', onChange);
+    mq?.addListener?.(onChange);
+    return () => {
+      mq?.removeEventListener?.('change', onChange);
+      mq?.removeListener?.(onChange);
+    };
+  }, [settings.theme]);
 
   const addMeal = meal => {
     const u = [meal, ...meals]; setMeals(u); saveMeals(u); setView('today');
@@ -603,7 +691,7 @@ function App() {
       </div>
 
       ${view !== 'add' && view !== 'settings' ? html`
-        <div style="flex-shrink:0;display:flex;background:rgba(12,26,16,.97);border-top:1px solid var(--border);padding-bottom:var(--sab)">
+        <div style="flex-shrink:0;display:flex;background:var(--nav-bg);border-top:1px solid var(--border);padding-bottom:var(--sab)">
           ${NAV.map(item => {
             const isAdd  = item.key === 'add';
             const active = view === item.key;

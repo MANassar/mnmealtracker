@@ -1,10 +1,11 @@
-const CACHE_NAME = 'meal-tracker-shell-v1';
+const CACHE_NAME = 'meal-tracker-shell-v0.1.1';
 const APP_SHELL = [
   './',
   './index.html',
   './preact.umd.js',
   './preact-hooks.umd.js',
   './htm.umd.js',
+  './version.js',
   './app.webmanifest',
 ];
 

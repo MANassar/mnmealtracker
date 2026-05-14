@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+version_file="version.js"
+sw_file="sw.js"
+
+current=$(sed -n "s/^window.APP_VERSION = '\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)';$/\1/p" "$version_file")
+if [ -z "$current" ]; then
+  echo "Could not read app version from $version_file" >&2
+  exit 1
+fi
+
+if ! git cat-file -e "HEAD:$version_file" 2>/dev/null; then
+  git add "$version_file" "$sw_file"
+  echo "Initialized app version: $current"
+  exit 0
+fi
+
+major=$(printf "%s" "$current" | cut -d. -f1)
+minor=$(printf "%s" "$current" | cut -d. -f2)
+patch=$(printf "%s" "$current" | cut -d. -f3)
+next="$major.$minor.$((patch + 1))"
+
+perl -0pi -e "s/window\.APP_VERSION = '\Q$current\E';/window.APP_VERSION = '$next';/" "$version_file"
+perl -0pi -e "s/meal-tracker-shell-v\Q$current\E/meal-tracker-shell-v$next/" "$sw_file"
+
+git add "$version_file" "$sw_file"
+echo "Bumped app version: $current -> $next"
