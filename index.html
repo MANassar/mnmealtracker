@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Meal Tracker">
   <meta name="theme-color" content="#0c1a10">
+  <link rel="manifest" href="./app.webmanifest">
   <title>Meal Tracker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;1,400&family=DM+Sans:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
@@ -45,12 +46,40 @@
   </style>
 </head>
 <body>
-<div id="root"></div>
-<script type="module">
-import { h, render }        from 'https://esm.sh/preact@10.22.0';
-import { useState, useRef } from 'https://esm.sh/preact@10.22.0/hooks';
-import htm from 'https://esm.sh/htm@3.1.1';
-const html = htm.bind(h);
+<div id="root">
+  <div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:14px">
+    Loading Meal Tracker...
+  </div>
+</div>
+<script src="./preact.umd.js"></script>
+<script src="./preact-hooks.umd.js"></script>
+<script src="./htm.umd.js"></script>
+<script>
+function showBootError(error) {
+  const root = document.getElementById('root');
+  const message = error?.message || String(error || 'Unknown startup error');
+  root.innerHTML = `
+    <div style="min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);color:var(--text)">
+      <div style="max-width:360px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;line-height:1.5">
+        <div style="font-family:'Playfair Display',serif;font-size:22px;margin-bottom:8px">Meal Tracker could not load</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Close the app and open it again from Safari once. If this keeps happening, remove the home-screen icon and add it again.</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--danger);word-break:break-word">${message.replace(/[<>&]/g, c => ({ '<':'&lt;', '>':'&gt;', '&':'&amp;' }[c]))}</div>
+      </div>
+    </div>`;
+}
+
+window.addEventListener('error', event => showBootError(event.error || event.message));
+window.addEventListener('unhandledrejection', event => showBootError(event.reason));
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+
+const { h, render } = window.preact;
+const { useState, useRef } = window.preactHooks;
+const html = window.htm.bind(h);
 
 /* ── Constants ─────────────────────────────────────────── */
 const DAILY_CAL   = 1800;
@@ -594,7 +623,11 @@ function App() {
     </div>`;
 }
 
-render(html`<${App}/>`, document.getElementById('root'));
+try {
+  render(html`<${App}/>`, document.getElementById('root'));
+} catch (error) {
+  showBootError(error);
+}
 </script>
 </body>
 </html>

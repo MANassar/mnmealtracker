@@ -1,0 +1,10 @@
+{
+  "name": "Meal Tracker",
+  "short_name": "Meals",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0c1a10",
+  "theme_color": "#0c1a10",
+  "orientation": "portrait"
+}
