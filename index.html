@@ -91,27 +91,18 @@
       touch-action: pan-y;
     }
     .tabbar {
-      position: fixed;
-      left: 0;
-      right: 0;
+      position: sticky;
       bottom: 0;
       z-index: 20;
+      flex-shrink: 0;
       height: calc(var(--tab-h) + var(--sab));
+      padding-bottom: var(--sab);
       display: flex;
-      align-items: stretch;
+      align-items: flex-start;
       background: var(--nav-bg);
       border-top: 1px solid var(--border);
       box-shadow: 0 -8px 20px rgba(0,0,0,.18);
       transform: translateZ(0);
-    }
-    .tabbar::after {
-      content: "";
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: -40px;
-      height: 40px;
-      background: var(--nav-bg);
     }
     a { color: var(--oai); text-decoration: none; }
   </style>
@@ -527,7 +518,7 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
         <button onClick=${onSettings}
           style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">⚙</button>
       </div>
-      <div class="scroll" style="flex:1;padding:0 16px calc(var(--tab-h) + var(--sab) + 16px)">
+      <div class="scroll" style="flex:1;padding:0 16px 16px">
         <div style="min-height:calc(100% + 1px)">
           <div style="display:flex;justify-content:center;padding:16px 0 12px">
             <${Ring} consumed=${Math.round(cal)} target=${targets.calories}/>
@@ -622,7 +613,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
             ${importMsg}
           </div>` : null}
       </div>
-      <div class="scroll" style="flex:1;padding:0 16px calc(var(--tab-h) + var(--sab) + 16px)">
+      <div class="scroll" style="flex:1;padding:0 16px 16px">
         <div style="min-height:calc(100% + 1px)">
           ${groups.length === 0 ? html`
             <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Meals will appear here after you log them.</div>` : null}
@@ -937,14 +928,14 @@ function App() {
             const active = view === item.key;
             return html`
               <button key=${item.key} onClick=${() => { setEditingMeal(null); setView(item.key); }}
-                style="flex:1;padding:${isAdd ? '8px 0 calc(var(--sab) + 14px)' : '12px 0 calc(var(--sab) + 14px)'};
+                style="flex:1;height:var(--tab-h);padding:${isAdd ? '8px 0 14px' : '12px 0 14px'};
                        background:${isAdd ? navAccent : active ? 'rgba(201,168,76,.12)' : 'none'};
                        border:none;cursor:pointer;
                        display:flex;flex-direction:column;align-items:center;gap:4px;
                        color:${isAdd ? '#0c1a10' : active ? navAccent : 'var(--muted)'};
-                       transition:color .2s, background .2s;min-height:calc(var(--tab-h) + var(--sab));position:relative;z-index:1">
-                <span style="font-size:${isAdd ? '24px' : '16px'};line-height:1">${item.icon}</span>
-                <span style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;font-weight:${active || isAdd ? 700 : 500}">${item.label}</span>
+                       transition:color .2s, background .2s;min-height:var(--tab-h);position:relative;z-index:1">
+                <span style="font-size:${isAdd ? '25px' : '17px'};line-height:1">${item.icon}</span>
+                <span style="font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:${active || isAdd ? 700 : 500}">${item.label}</span>
                 ${active && !isAdd ? html`<span style="width:18px;height:2px;background:${navAccent};border-radius:2px;margin-top:1px"></span>` : null}
               </button>`;
           })}
