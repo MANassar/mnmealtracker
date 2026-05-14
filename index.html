@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Meal Tracker">
+  <meta name="theme-color" content="#0c1a10">
+  <title>Meal Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;1,400&family=DM+Sans:wght@400;500;700&family=DM+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:      #0c1a10;
+      --surface: #111f15;
+      --card:    #18281c;
+      --border:  rgba(255,255,255,0.06);
+      --accent:  #c9a84c;
+      --mint:    #6db87a;
+      --sky:     #7da8d4;
+      --peach:   #d4886a;
+      --plum:    #a882c4;
+      --text:    #f0ece3;
+      --muted:   #556358;
+      --danger:  #d46a5a;
+      --oai:     #74aa9c;
+      --sat: env(safe-area-inset-top, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+    }
+    *, *::before, *::after {
+      box-sizing: border-box; margin: 0; padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body, #root { height: 100%; overflow: hidden; }
+    body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; }
+    input, textarea, button { font-family: inherit; }
+    input, textarea { font-size: 16px !important; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    ::-webkit-scrollbar { display: none; }
+    .scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    a { color: var(--oai); text-decoration: none; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+import { h, render }        from 'https://esm.sh/preact@10.22.0';
+import { useState, useRef } from 'https://esm.sh/preact@10.22.0/hooks';
+import htm from 'https://esm.sh/htm@3.1.1';
+const html = htm.bind(h);
+
+/* ── Constants ─────────────────────────────────────────── */
+const DAILY_CAL   = 1800;
+const MEALS_KEY   = 'mt_meals_v1';
+const SETT_KEY    = 'mt_settings_v1';
+
+/* ── Storage ────────────────────────────────────────────── */
+const loadMeals    = () => { try { return JSON.parse(localStorage.getItem(MEALS_KEY) || '[]'); } catch { return []; } };
+const saveMeals    = m  => { try { localStorage.setItem(MEALS_KEY, JSON.stringify(m)); } catch {} };
+const loadSettings = () => { try { return JSON.parse(localStorage.getItem(SETT_KEY)  || '{}'); } catch { return {}; } };
+const saveSettings = s  => { try { localStorage.setItem(SETT_KEY,  JSON.stringify(s)); } catch {} };
+
+/* ── Utils ──────────────────────────────────────────────── */
+const todayStr    = () => new Date().toISOString().split('T')[0];
+const fmtTime     = ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const fmtDate     = ds => new Date(ds + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+const sum         = (arr, k) => arr.reduce((a, m) => a + (parseFloat(m[k]) || 0), 0);
+const fileToB64   = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+const groupByDate = meals => {
+  const g = {};
+  meals.forEach(m => { (g[m.date] = g[m.date] || []).push(m); });
+  return Object.entries(g).sort(([a], [b]) => b.localeCompare(a));
+};
+
+/* ── API ────────────────────────────────────────────────── */
+const PROMPT = desc =>
+`You are a clinical nutritionist. Analyze the food in the image.${desc ? ` User context: "${desc}"` : ''}
+Return ONLY a raw JSON object — no markdown, no explanation:
+{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note"}
+Calories in kcal. Macros in grams. Do not underestimate portions.`;
+
+async function callAnthropic(img, desc, key) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514', max_tokens: 1000,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: img.type, data: img.b64 } },
+        { type: 'text',  text: PROMPT(desc) },
+      ]}],
+    }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+  return (d.content || []).map(b => b.text || '').join('');
+}
+
+async function callOpenAI(img, desc, key) {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify({
+      model: 'gpt-4o', max_tokens: 1000,
+      messages: [{ role: 'user', content: [
+        { type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } },
+        { type: 'text',      text: PROMPT(desc) },
+      ]}],
+    }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+  return d.choices?.[0]?.message?.content || '';
+}
+
+/* ── CalorieRing ────────────────────────────────────────── */
+function Ring({ consumed, target }) {
+  const r = 56, sw = 9, circ = 2 * Math.PI * r;
+  const pct = Math.min(consumed / target, 1), over = consumed > target;
+  return html`
+    <div style="position:relative;width:144px;height:144px;flex-shrink:0">
+      <svg width="144" height="144" style="transform:rotate(-90deg)">
+        <circle cx="72" cy="72" r=${r} fill="none" stroke="var(--card)" stroke-width=${sw}/>
+        <circle cx="72" cy="72" r=${r} fill="none"
+          stroke=${over ? 'var(--danger)' : 'var(--accent)'} stroke-width=${sw}
+          stroke-dasharray="${pct * circ} ${circ}" stroke-linecap="round"
+          style="transition:stroke-dasharray .7s ease"/>
+      </svg>
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+        <span style="font-family:'Playfair Display',serif;font-size:28px;color:${over ? 'var(--danger)' : 'var(--text)'};line-height:1">
+          ${Math.round(consumed)}
+        </span>
+        <span style="font-size:10px;color:var(--muted);letter-spacing:.14em;text-transform:uppercase">
+          / ${target} kcal
+        </span>
+      </div>
+    </div>`;
+}
+
+/* ── MacroBar ───────────────────────────────────────────── */
+function MBar({ label, value, max, color }) {
+  const pct = Math.min((value / max) * 100, 100);
+  return html`
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;justify-content:space-between;margin-bottom:5px">
+        <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">${label}</span>
+        <span style="font-size:11px;color:var(--text);font-family:'DM Mono',monospace">${value.toFixed(0)}g</span>
+      </div>
+      <div style="height:3px;background:var(--card);border-radius:2px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${color};border-radius:2px;transition:width .7s ease"/>
+      </div>
+    </div>`;
+}
+
+/* ── MealCard ───────────────────────────────────────────── */
+function MealCard({ meal, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const pc   = meal.provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+  const m3   = [['P', meal.protein, 'var(--mint)'], ['C', meal.carbs, 'var(--sky)'], ['F', meal.fat, 'var(--peach)']];
+  const m4   = [['Protein', meal.protein, 'var(--mint)'], ['Carbs', meal.carbs, 'var(--sky)'], ['Fat', meal.fat, 'var(--peach)'], ['Fiber', meal.fiber || 0, 'var(--plum)']];
+  return html`
+    <div onClick=${() => setOpen(!open)}
+      style="background:var(--card);border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:10px;cursor:pointer">
+      <div style="display:flex;align-items:stretch">
+        ${meal.imageData
+          ? html`<img src="data:${meal.imageType};base64,${meal.imageData}" style="width:80px;height:80px;object-fit:cover;flex-shrink:0"/>`
+          : html`<div style="width:80px;height:80px;background:var(--surface);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:26px">🍽</div>`}
+        <div style="flex:1;padding:10px 12px;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+            <span style="font-family:'Playfair Display',serif;font-size:14px;color:var(--text);line-height:1.3;flex:1">${meal.mealName}</span>
+            <span style="font-size:14px;color:var(--accent);font-weight:700;font-family:'DM Mono',monospace;white-space:nowrap">${Math.round(meal.calories)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+            <span style="font-size:10px;color:var(--muted)">${fmtTime(meal.timestamp)}</span>
+            ${meal.provider ? html`
+              <span style="font-size:9px;color:${pc};background:${meal.provider === 'openai' ? 'rgba(116,170,156,.12)' : 'rgba(201,168,76,.12)'};padding:1px 6px;border-radius:3px;letter-spacing:.05em;text-transform:uppercase">
+                ${meal.provider === 'openai' ? 'GPT-4o' : 'Claude'}
+              </span>` : null}
+          </div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            ${m3.map(([l, v, c]) => html`<span style="font-size:11px;color:${c};font-family:'DM Mono',monospace">${l} ${Number(v).toFixed(0)}g</span>`)}
+          </div>
+        </div>
+      </div>
+      ${open ? html`
+        <div style="padding:12px;border-top:1px solid var(--border)">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;background:var(--surface);border-radius:10px;padding:10px 8px">
+            ${m4.map(([l, v, c]) => html`
+              <div style="text-align:center">
+                <div style="font-size:15px;font-weight:700;color:${c};font-family:'DM Mono',monospace">${Number(v).toFixed(0)}g</div>
+                <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:2px">${l}</div>
+              </div>`)}
+          </div>
+          ${meal.ingredients?.length > 0 ? html`
+            <div style="margin-bottom:8px">
+              <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:5px">Estimated ingredients</div>
+              ${meal.ingredients.map(i => html`<div style="font-size:12px;color:var(--text);margin-bottom:2px">· ${i}</div>`)}
+            </div>` : null}
+          ${meal.portionNote ? html`
+            <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(201,168,76,.06);border-radius:8px;border-left:2px solid ${pc}">
+              ${meal.portionNote}
+            </div>` : null}
+          ${meal.description ? html`
+            <div style="font-size:11px;color:var(--muted);margin-top:8px">
+              <span style="color:var(--accent)">Note:</span> ${meal.description}
+            </div>` : null}
+          <button
+            onClick=${e => { e.stopPropagation(); if (confirm('Delete this meal?')) onDelete(meal.id); }}
+            style="margin-top:12px;background:none;border:1px solid var(--danger);color:var(--danger);border-radius:8px;padding:0 14px;font-size:11px;cursor:pointer;height:38px">
+            Delete entry
+          </button>
+        </div>` : null}
+    </div>`;
+}
+
+/* ── Add Meal View ──────────────────────────────────────── */
+function AddView({ settings, onAdd, onCancel }) {
+  const { provider = 'anthropic', anthropicKey = '', oaiKey = '' } = settings;
+  const [img,      setImg]      = useState(null);
+  const [desc,     setDesc]     = useState('');
+  const [status,   setStatus]   = useState('idle');
+  const [analysis, setAnalysis] = useState(null);
+  const [editCal,  setEditCal]  = useState('');
+  const [err,      setErr]      = useState('');
+  const fileRef = useRef();
+  const pc = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+
+  const pick = async e => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setAnalysis(null); setStatus('idle');
+    setImg({ url: URL.createObjectURL(f), b64: await fileToB64(f), type: f.type });
+  };
+
+  const analyze = async () => {
+    if (!img) { setErr('Please add a photo first.'); return; }
+    const key = provider === 'openai' ? oaiKey : anthropicKey;
+    if (!key) { setErr(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} key missing — add it in Settings.`); return; }
+    setStatus('analyzing'); setErr('');
+    try {
+      const raw = provider === 'openai'
+        ? await callOpenAI(img, desc, key)
+        : await callAnthropic(img, desc, key);
+      const parsed = JSON.parse(raw.replace(/```json|```/gi, '').trim());
+      setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
+    } catch (e) { setErr(`Analysis failed: ${e.message}`); setStatus('error'); }
+  };
+
+  const log = () => {
+    if (!analysis) return;
+    onAdd({
+      id: Date.now(), date: todayStr(), timestamp: new Date().toISOString(),
+      description: desc, provider,
+      imageData: img?.b64 || null, imageType: img?.type || null,
+      mealName:    analysis.mealName,
+      calories:    parseInt(editCal) || analysis.calories,
+      protein:     analysis.protein,  carbs:  analysis.carbs,
+      fat:         analysis.fat,      fiber:  analysis.fiber || 0,
+      ingredients: analysis.ingredients  || [],
+      portionNote: analysis.portionNote  || '',
+      confidence:  analysis.confidence   || 'medium',
+    });
+  };
+
+  return html`
+    <div style="display:flex;flex-direction:column;height:100%">
+      <!-- Header -->
+      <div style="padding:calc(var(--sat) + 14px) 16px 12px;flex-shrink:0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button onClick=${onCancel}
+            style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">←</button>
+          <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text);flex:1">Add Meal</span>
+          <span style="font-size:10px;color:${pc};background:${provider === 'openai' ? 'rgba(116,170,156,.12)' : 'rgba(201,168,76,.12)'};padding:4px 10px;border-radius:20px;border:1px solid ${pc};letter-spacing:.06em;text-transform:uppercase;font-weight:600">
+            ${provider === 'openai' ? 'GPT-4o' : 'Claude'}
+          </span>
+        </div>
+      </div>
+
+      <!-- Scroll body -->
+      <div class="scroll" style="flex:1;padding:14px 16px">
+        <!-- Photo -->
+        <div onClick=${() => !img && fileRef.current?.click()}
+          style="border-radius:16px;overflow:hidden;margin-bottom:12px;background:var(--card);
+                 border:${img ? '1px solid var(--border)' : '2px dashed var(--muted)'};
+                 cursor:${img ? 'default' : 'pointer'};
+                 ${img ? '' : 'min-height:160px;display:flex;align-items:center;justify-content:center'}">
+          ${img ? html`
+            <div style="position:relative">
+              <img src=${img.url} style="width:100%;max-height:240px;object-fit:cover;display:block"/>
+              <button onClick=${e => { e.stopPropagation(); setImg(null); setAnalysis(null); setStatus('idle'); fileRef.current.value = ''; }}
+                style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);border:none;color:var(--text);border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center">×</button>
+            </div>` : html`
+            <div style="text-align:center;color:var(--muted);padding:20px">
+              <div style="font-size:42px;margin-bottom:8px">📷</div>
+              <div style="font-size:15px;font-weight:500">Add a photo</div>
+              <div style="font-size:12px;margin-top:3px">camera or gallery</div>
+            </div>`}
+        </div>
+        <input ref=${fileRef} type="file" accept="image/*" onChange=${pick} style="display:none"/>
+
+        <!-- Description -->
+        <textarea value=${desc} onInput=${e => setDesc(e.target.value)}
+          placeholder="Optional: portions, key ingredients, restaurant name…" rows="3"
+          style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;resize:none;margin-bottom:12px;font-family:'DM Sans',sans-serif;box-sizing:border-box"></textarea>
+
+        <!-- Error -->
+        ${err ? html`
+          <div style="background:rgba(212,106,90,.12);border:1px solid var(--danger);border-radius:10px;padding:12px;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.4">
+            ${err}
+          </div>` : null}
+
+        <!-- Analysis result -->
+        ${status === 'review' && analysis ? html`
+          <div style="background:var(--card);border:1px solid rgba(${provider === 'openai' ? '116,170,156' : '201,168,76'},.2);border-radius:16px;padding:14px;margin-bottom:12px">
+            <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text);margin-bottom:12px">${analysis.mealName}</div>
+            <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+              <span style="font-size:12px;color:var(--muted);flex:1">Calories</span>
+              <input type="number" value=${editCal} onInput=${e => setEditCal(e.target.value)}
+                style="width:72px;background:transparent;border:none;border-bottom:1px solid ${pc};color:${pc};font-size:22px;font-family:'DM Mono',monospace;font-weight:700;text-align:center;outline:none;padding:2px 0"/>
+              <span style="font-size:12px;color:var(--muted)">kcal</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+              ${[['Protein', analysis.protein, 'var(--mint)'], ['Carbs', analysis.carbs, 'var(--sky)'],
+                 ['Fat', analysis.fat, 'var(--peach)'], ['Fiber', analysis.fiber || 0, 'var(--plum)']].map(([l, v, c]) => html`
+                <div style="background:var(--surface);border-radius:10px;padding:10px 4px;text-align:center">
+                  <div style="font-size:16px;font-weight:700;color:${c};font-family:'DM Mono',monospace">${Number(v).toFixed(1)}</div>
+                  <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:3px">${l}</div>
+                </div>`)}
+            </div>
+            ${analysis.portionNote ? html`
+              <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(${provider === 'openai' ? '116,170,156' : '201,168,76'},.06);border-radius:8px;border-left:2px solid ${pc}">
+                ${analysis.portionNote}
+              </div>` : null}
+          </div>` : null}
+      </div>
+
+      <!-- CTA -->
+      <div style="padding:10px 16px calc(var(--sab) + 10px);border-top:1px solid var(--border);flex-shrink:0">
+        ${status !== 'review' ? html`
+          <button onClick=${analyze}
+            style="width:100%;padding:16px;background:${!img ? 'var(--muted)' : pc};border:none;border-radius:14px;font-size:15px;font-weight:700;color:${!img ? 'var(--surface)' : '#0c1a10'};cursor:${!img || status === 'analyzing' ? 'not-allowed' : 'pointer'};min-height:54px;opacity:${status === 'analyzing' ? .7 : 1}">
+            ${status === 'analyzing' ? 'Analyzing…' : 'Analyze Meal'}
+          </button>` : html`
+          <div style="display:flex;gap:10px">
+            <button onClick=${() => { setStatus('idle'); setAnalysis(null); }}
+              style="flex:1;padding:16px;background:none;border:1px solid var(--muted);border-radius:14px;font-size:14px;color:var(--muted);cursor:pointer;min-height:54px">
+              Re-analyze
+            </button>
+            <button onClick=${log}
+              style="flex:2;padding:16px;background:${pc};border:none;border-radius:14px;font-size:15px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:54px">
+              Log Meal ✓
+            </button>
+          </div>`}
+      </div>
+    </div>`;
+}
+
+/* ── Today View ─────────────────────────────────────────── */
+function TodayView({ meals, onDelete, onSettings }) {
+  const today   = meals.filter(m => m.date === todayStr());
+  const cal     = sum(today, 'calories'), protein = sum(today, 'protein');
+  const carbs   = sum(today, 'carbs'),    fat     = sum(today, 'fat');
+  const rem     = DAILY_CAL - cal;
+  const sorted  = [...today].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const label   = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  return html`
+    <div style="display:flex;flex-direction:column;height:100%">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:calc(var(--sat) + 14px) 16px 0;flex-shrink:0">
+        <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.18em">${label}</span>
+        <button onClick=${onSettings}
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">⚙</button>
+      </div>
+      <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
+        <div style="display:flex;justify-content:center;padding:16px 0 12px">
+          <${Ring} consumed=${Math.round(cal)} target=${DAILY_CAL}/>
+        </div>
+        <div style="text-align:center;font-size:12px;font-family:'DM Mono',monospace;margin-bottom:18px;color:${rem >= 0 ? 'var(--mint)' : 'var(--danger)'}">
+          ${rem >= 0 ? `${Math.round(rem)} kcal remaining` : `${Math.abs(Math.round(rem))} kcal over target`}
+        </div>
+        <div style="display:flex;gap:14px;margin-bottom:24px">
+          <${MBar} label="Protein" value=${protein} max=${150} color="var(--mint)"/>
+          <${MBar} label="Carbs"   value=${carbs}   max=${180} color="var(--sky)"/>
+          <${MBar} label="Fat"     value=${fat}      max=${60}  color="var(--peach)"/>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+          <span style="font-family:'Playfair Display',serif;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">
+            ${today.length === 0 ? 'No meals logged yet' : `${today.length} Meal${today.length > 1 ? 's' : ''} today`}
+          </span>
+          ${today.length > 0 ? html`
+            <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">
+              ${protein.toFixed(0)}P·${carbs.toFixed(0)}C·${fat.toFixed(0)}F
+            </span>` : null}
+        </div>
+        ${sorted.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete}/>`)}
+        ${today.length === 0 ? html`
+          <div style="text-align:center;padding-top:36px;color:var(--muted)">
+            <div style="font-size:36px;margin-bottom:10px">🍽</div>
+            <div style="font-size:14px">Tap <strong style="color:var(--accent)">+</strong> to log your first meal</div>
+          </div>` : null}
+      </div>
+    </div>`;
+}
+
+/* ── History View ───────────────────────────────────────── */
+function HistView({ meals, onDelete }) {
+  const past   = meals.filter(m => m.date !== todayStr());
+  const groups = groupByDate(past);
+  return html`
+    <div style="display:flex;flex-direction:column;height:100%">
+      <div style="padding:calc(var(--sat) + 14px) 16px 0;flex-shrink:0">
+        <div style="font-family:'Playfair Display',serif;font-size:24px;color:var(--text);padding-bottom:14px">History</div>
+      </div>
+      <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
+        ${groups.length === 0 ? html`
+          <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Past meals will appear here.</div>` : null}
+        ${groups.map(([date, dayMeals]) => {
+          const cal = sum(dayMeals, 'calories'), p = sum(dayMeals, 'protein');
+          const c   = sum(dayMeals, 'carbs'),    f = sum(dayMeals, 'fat');
+          const over = cal > DAILY_CAL;
+          return html`
+            <div key=${date} style="margin-bottom:24px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
+                <span style="font-family:'Playfair Display',serif;font-size:16px;color:var(--text)">${fmtDate(date)}</span>
+                <div style="display:flex;gap:8px;align-items:baseline">
+                  <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">${p.toFixed(0)}P·${c.toFixed(0)}C·${f.toFixed(0)}F</span>
+                  <span style="font-size:13px;color:${over ? 'var(--danger)' : 'var(--mint)'};font-family:'DM Mono',monospace;font-weight:700">${Math.round(cal)}</span>
+                </div>
+              </div>
+              <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
+                <div style="height:100%;width:${Math.min((cal / DAILY_CAL) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
+              </div>
+              ${dayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete}/>`)}
+            </div>`;
+        })}
+      </div>
+    </div>`;
+}
+
+/* ── Settings View ──────────────────────────────────────── */
+function SettView({ settings, onSave, onBack }) {
+  const [provider,     setProvider]     = useState(settings.provider     || 'anthropic');
+  const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
+  const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
+  const [saved,        setSaved]        = useState(false);
+
+  const save = () => {
+    onSave({ provider, anthropicKey, oaiKey });
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
+  };
+
+  const ProvTab = ({ id, label, sub }) => {
+    const active = provider === id;
+    const col    = id === 'openai' ? 'var(--oai)' : 'var(--accent)';
+    const bg     = id === 'openai' ? 'rgba(116,170,156,.1)' : 'rgba(201,168,76,.1)';
+    return html`
+      <button onClick=${() => setProvider(id)}
+        style="flex:1;padding:12px 8px;border-radius:10px;border:1px solid ${active ? col : 'var(--border)'};background:${active ? bg : 'none'};cursor:pointer;text-align:center;transition:all .2s">
+        <div style="font-size:13px;font-weight:600;color:${active ? col : 'var(--muted)'}">${label}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${sub}</div>
+      </button>`;
+  };
+
+  const activeColor = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+
+  return html`
+    <div style="display:flex;flex-direction:column;height:100%">
+      <div style="padding:calc(var(--sat) + 14px) 16px 12px;flex-shrink:0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <button onClick=${onBack}
+            style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">←</button>
+          <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text)">Settings</span>
+        </div>
+      </div>
+
+      <div class="scroll" style="flex:1;padding:20px 16px calc(var(--sab) + 20px)">
+
+        <!-- Provider selector -->
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">AI Provider</div>
+        <div style="display:flex;gap:10px;margin-bottom:22px">
+          <${ProvTab} id="anthropic" label="Anthropic" sub="Claude Sonnet 4"/>
+          <${ProvTab} id="openai"    label="OpenAI"    sub="GPT-4o"/>
+        </div>
+
+        <!-- Anthropic key -->
+        <div style="margin-bottom:20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">Anthropic API Key</span>
+            ${provider === 'anthropic' ? html`<span style="font-size:10px;color:var(--accent);font-weight:600">● Active</span>` : null}
+          </div>
+          <input type="password" value=${anthropicKey} onInput=${e => setAnthropicKey(e.target.value)}
+            placeholder="sk-ant-api03-…"
+            style="width:100%;background:var(--card);border:1px solid ${provider === 'anthropic' ? 'rgba(201,168,76,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;margin-bottom:6px"/>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">
+            Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+          </div>
+        </div>
+
+        <!-- OpenAI key -->
+        <div style="margin-bottom:24px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">OpenAI API Key</span>
+            ${provider === 'openai' ? html`<span style="font-size:10px;color:var(--oai);font-weight:600">● Active</span>` : null}
+          </div>
+          <input type="password" value=${oaiKey} onInput=${e => setOaiKey(e.target.value)}
+            placeholder="sk-proj-…"
+            style="width:100%;background:var(--card);border:1px solid ${provider === 'openai' ? 'rgba(116,170,156,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;margin-bottom:6px"/>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">
+            Get a key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a>
+          </div>
+        </div>
+
+        <!-- Save -->
+        <button onClick=${save}
+          style="width:100%;padding:16px;background:${activeColor};border:none;border-radius:14px;font-size:15px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:54px;margin-bottom:24px">
+          ${saved ? 'Saved ✓' : 'Save Settings'}
+        </button>
+
+        <!-- Info -->
+        <div style="font-size:12px;color:var(--muted);line-height:1.9;padding:14px;background:var(--card);border-radius:12px;margin-bottom:16px">
+          <div style="color:var(--text);font-weight:600;margin-bottom:8px">Daily Targets</div>
+          <div>Calories: <span style="color:var(--text)">${DAILY_CAL} kcal</span></div>
+          <div>Protein <span style="color:var(--mint)">150g</span> · Carbs <span style="color:var(--sky)">180g</span> · Fat <span style="color:var(--peach)">60g</span></div>
+        </div>
+
+        <div style="font-size:12px;color:var(--muted);padding:14px;background:var(--card);border-radius:12px;line-height:1.7">
+          <div style="color:var(--text);font-weight:600;margin-bottom:6px">📱 Install as app</div>
+          <div><strong style="color:var(--text)">iOS Safari:</strong> Share → Add to Home Screen</div>
+          <div><strong style="color:var(--text)">Android Chrome:</strong> ⋮ → Add to Home Screen</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ── Root App ───────────────────────────────────────────── */
+function App() {
+  const stored  = loadSettings();
+  const [meals,   setMeals]    = useState(() => loadMeals());
+  const [settings,setSettings] = useState(() => ({ provider:'anthropic', anthropicKey:'', oaiKey:'', ...stored }));
+  const [view,    setView]     = useState('today');
+
+  const addMeal = meal => {
+    const u = [meal, ...meals]; setMeals(u); saveMeals(u); setView('today');
+  };
+  const deleteMeal = id => {
+    const u = meals.filter(m => m.id !== id); setMeals(u); saveMeals(u);
+  };
+  const updateSettings = s => { setSettings(s); saveSettings(s); };
+
+  const NAV = [
+    { key: 'today',   icon: '◉', label: 'Today'   },
+    { key: 'add',     icon: '+', label: 'Add'      },
+    { key: 'history', icon: '≡', label: 'History'  },
+  ];
+
+  const navAccent = settings.provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+
+  return html`
+    <div style="display:flex;flex-direction:column;height:100%;background:var(--bg)">
+      <div style="flex:1;overflow:hidden">
+        ${view === 'add'      ? html`<${AddView}  settings=${settings} onAdd=${addMeal}  onCancel=${() => setView('today')}/>` :
+          view === 'settings' ? html`<${SettView} settings=${settings} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')}/>` :
+          view === 'history'  ? html`<${HistView} meals=${meals} onDelete=${deleteMeal}/>` :
+                                html`<${TodayView} meals=${meals} onDelete=${deleteMeal} onSettings=${() => setView('settings')}/>`}
+      </div>
+
+      ${view !== 'add' && view !== 'settings' ? html`
+        <div style="flex-shrink:0;display:flex;background:rgba(12,26,16,.97);border-top:1px solid var(--border);padding-bottom:var(--sab)">
+          ${NAV.map(item => {
+            const isAdd  = item.key === 'add';
+            const active = view === item.key;
+            return html`
+              <button key=${item.key} onClick=${() => setView(item.key)}
+                style="flex:1;padding:${isAdd ? '8px 0 14px' : '12px 0 14px'};
+                       background:${isAdd ? navAccent : 'none'};
+                       border:none;cursor:pointer;
+                       display:flex;flex-direction:column;align-items:center;gap:4px;
+                       color:${isAdd ? '#0c1a10' : active ? navAccent : 'var(--muted)'};
+                       transition:color .2s;min-height:52px">
+                <span style="font-size:${isAdd ? '24px' : '16px'};line-height:1">${item.icon}</span>
+                <span style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;font-weight:500">${item.label}</span>
+              </button>`;
+          })}
+        </div>` : null}
+    </div>`;
+}
+
+render(html`<${App}/>`, document.getElementById('root'));
+</script>
+</body>
+</html>
