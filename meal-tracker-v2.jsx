@@ -221,7 +221,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
   };
 
   return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+    <div style={{display:"flex",flexDirection:"column",height:"100%",minHeight:0}}>
       <div style={{padding:"16px 16px 12px",flexShrink:0,borderBottom:`1px solid ${C.border}`}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <button onClick={onCancel} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22,minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center"}}>←</button>
@@ -315,28 +315,30 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
         <button onClick={onSettings} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙</button>
       </div>
       <div style={{flex:1,minHeight:0,overflowY:"scroll",WebkitOverflowScrolling:"touch",overscrollBehaviorY:"auto",touchAction:"pan-y",padding:"0 16px 80px"}}>
-        <div style={{display:"flex",justifyContent:"center",padding:"16px 0 12px"}}><Ring consumed={Math.round(cal)} target={DAILY_CAL}/></div>
-        <div style={{textAlign:"center",fontSize:12,fontFamily:"'DM Mono',monospace",marginBottom:18,color:rem>=0?C.mint:C.danger}}>
-          {rem>=0?`${Math.round(rem)} kcal remaining`:`${Math.abs(Math.round(rem))} kcal over target`}
-        </div>
-        <div style={{display:"flex",gap:14,marginBottom:24}}>
-          <MBar label="Protein" value={protein} max={150} color={C.mint}/>
-          <MBar label="Carbs"   value={carbs}   max={180} color={C.sky}/>
-          <MBar label="Fat"     value={fat}     max={60}  color={C.peach}/>
-        </div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
-          <span style={{fontFamily:"'Playfair Display',serif",fontSize:12,color:C.muted,textTransform:"uppercase",letterSpacing:".12em"}}>
-            {today.length===0?"No meals logged yet":`${today.length} Meal${today.length>1?"s":""} today`}
-          </span>
-          {today.length>0&&<span style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{protein.toFixed(0)}P·{carbs.toFixed(0)}C·{fat.toFixed(0)}F</span>}
-        </div>
-        {sorted.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete} onEdit={onEdit}/>)}
-        {today.length===0&&(
-          <div style={{textAlign:"center",paddingTop:36,color:C.muted}}>
-            <div style={{fontSize:36,marginBottom:10}}>🍽</div>
-            <div style={{fontSize:14}}>Tap <strong style={{color:C.accent}}>+</strong> to log your first meal</div>
+        <div style={{minHeight:"calc(100% + 1px)"}}>
+          <div style={{display:"flex",justifyContent:"center",padding:"16px 0 12px"}}><Ring consumed={Math.round(cal)} target={DAILY_CAL}/></div>
+          <div style={{textAlign:"center",fontSize:12,fontFamily:"'DM Mono',monospace",marginBottom:18,color:rem>=0?C.mint:C.danger}}>
+            {rem>=0?`${Math.round(rem)} kcal remaining`:`${Math.abs(Math.round(rem))} kcal over target`}
           </div>
-        )}
+          <div style={{display:"flex",gap:14,marginBottom:24}}>
+            <MBar label="Protein" value={protein} max={150} color={C.mint}/>
+            <MBar label="Carbs"   value={carbs}   max={180} color={C.sky}/>
+            <MBar label="Fat"     value={fat}     max={60}  color={C.peach}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
+            <span style={{fontFamily:"'Playfair Display',serif",fontSize:12,color:C.muted,textTransform:"uppercase",letterSpacing:".12em"}}>
+              {today.length===0?"No meals logged yet":`${today.length} Meal${today.length>1?"s":""} today`}
+            </span>
+            {today.length>0&&<span style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace"}}>{protein.toFixed(0)}P·{carbs.toFixed(0)}C·{fat.toFixed(0)}F</span>}
+          </div>
+          {sorted.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete} onEdit={onEdit}/>)}
+          {today.length===0&&(
+            <div style={{textAlign:"center",paddingTop:36,color:C.muted}}>
+              <div style={{fontSize:36,marginBottom:10}}>🍽</div>
+              <div style={{fontSize:14}}>Tap <strong style={{color:C.accent}}>+</strong> to log your first meal</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -346,36 +348,38 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
 function HistView({ meals, onDelete, onEdit }) {
   const groups = groupByDate(meals);
   return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+    <div style={{display:"flex",flexDirection:"column",height:"100%",minHeight:0}}>
       <div style={{padding:"16px 16px 0",flexShrink:0}}>
         <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,color:C.text,paddingBottom:14}}>History</div>
       </div>
       <div style={{flex:1,minHeight:0,overflowY:"scroll",WebkitOverflowScrolling:"touch",overscrollBehaviorY:"auto",touchAction:"pan-y",padding:"0 16px 80px"}}>
-        {groups.length===0&&<div style={{textAlign:"center",paddingTop:48,color:C.muted,fontSize:14}}>Meals will appear here after you log them.</div>}
-        {groups.map(([date,dayMeals])=>{
-          const cal=sumKey(dayMeals,"calories"),p=sumKey(dayMeals,"protein"),c=sumKey(dayMeals,"carbs"),f=sumKey(dayMeals,"fat"),over=cal>DAILY_CAL;
-          const sortedDayMeals=[...dayMeals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp));
-          return (
-            <div key={date} style={{marginBottom:24}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:8}}>
-                <div>
-                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:C.text}}>{fmtDate(date)}</div>
-                  <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".1em",marginTop:3}}>
-                    {dayMeals.length} Meal{dayMeals.length===1?"":"s"}
+        <div style={{minHeight:"calc(100% + 1px)"}}>
+          {groups.length===0&&<div style={{textAlign:"center",paddingTop:48,color:C.muted,fontSize:14}}>Meals will appear here after you log them.</div>}
+          {groups.map(([date,dayMeals])=>{
+            const cal=sumKey(dayMeals,"calories"),p=sumKey(dayMeals,"protein"),c=sumKey(dayMeals,"carbs"),f=sumKey(dayMeals,"fat"),over=cal>DAILY_CAL;
+            const sortedDayMeals=[...dayMeals].sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp));
+            return (
+              <div key={date} style={{marginBottom:24}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:8}}>
+                  <div>
+                    <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:C.text}}>{fmtDate(date)}</div>
+                    <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".1em",marginTop:3}}>
+                      {dayMeals.length} Meal{dayMeals.length===1?"":"s"}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:16,color:over?C.danger:C.mint,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{Math.round(cal)} kcal</div>
+                    <div style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace",marginTop:3}}>{p.toFixed(0)}P · {c.toFixed(0)}C · {f.toFixed(0)}F</div>
                   </div>
                 </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:16,color:over?C.danger:C.mint,fontFamily:"'DM Mono',monospace",fontWeight:700}}>{Math.round(cal)} kcal</div>
-                  <div style={{fontSize:10,color:C.muted,fontFamily:"'DM Mono',monospace",marginTop:3}}>{p.toFixed(0)}P · {c.toFixed(0)}C · {f.toFixed(0)}F</div>
+                <div style={{height:2,background:C.card,borderRadius:1,marginBottom:8}}>
+                  <div style={{height:"100%",width:`${Math.min((cal/DAILY_CAL)*100,100)}%`,background:over?C.danger:C.accent,borderRadius:1}}/>
                 </div>
+                {sortedDayMeals.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete} onEdit={onEdit}/>)}
               </div>
-              <div style={{height:2,background:C.card,borderRadius:1,marginBottom:8}}>
-                <div style={{height:"100%",width:`${Math.min((cal/DAILY_CAL)*100,100)}%`,background:over?C.danger:C.accent,borderRadius:1}}/>
-              </div>
-              {sortedDayMeals.map(m=><MealCard key={m.id} meal={m} onDelete={onDelete} onEdit={onEdit}/>)}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
