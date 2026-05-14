@@ -91,10 +91,11 @@
       touch-action: pan-y;
     }
     .tabbar {
-      position: sticky;
+      position: fixed;
       bottom: 0;
+      left: 0;
+      right: 0;
       z-index: 20;
-      flex-shrink: 0;
       height: calc(var(--tab-h) + var(--sab));
       padding-bottom: var(--sab);
       display: flex;
@@ -913,8 +914,8 @@ function App() {
   const navAccent = settings.provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
 
   return html`
-    <div style="display:flex;flex-direction:column;height:100%;background:var(--bg)">
-      <div style="flex:1;overflow:hidden;min-height:0">
+    <div style="display:flex;flex-direction:column;height:100%;background:var(--bg);padding-bottom:${view !== 'add' && view !== 'settings' ? 'calc(var(--tab-h) + var(--sab))' : '0'}">
+      <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onExport=${exportMeals} onImport=${importMeals}/>` :

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'meal-tracker-shell-v0.1.13';
+const CACHE_NAME = 'meal-tracker-shell-v0.1.14';
 const APP_SHELL = [
   './',
   './index.html',
