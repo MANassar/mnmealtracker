@@ -30,6 +30,7 @@
       --nav-bg:  rgba(12,26,16,.97);
       --sat: env(safe-area-inset-top, 0px);
       --sab: env(safe-area-inset-bottom, 0px);
+      --tab-h: 64px;
       color-scheme: dark;
     }
     :root[data-theme="light"] {
@@ -88,6 +89,21 @@
       -webkit-overflow-scrolling: touch;
       overscroll-behavior-y: auto;
       touch-action: pan-y;
+    }
+    .tabbar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 20;
+      height: calc(var(--tab-h) + var(--sab));
+      padding-bottom: var(--sab);
+      display: flex;
+      align-items: stretch;
+      background: var(--nav-bg);
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -8px 20px rgba(0,0,0,.18);
+      transform: translateZ(0);
     }
     a { color: var(--oai); text-decoration: none; }
   </style>
@@ -503,7 +519,7 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
         <button onClick=${onSettings}
           style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">⚙</button>
       </div>
-      <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
+      <div class="scroll" style="flex:1;padding:0 16px calc(var(--tab-h) + var(--sab) + 16px)">
         <div style="min-height:calc(100% + 1px)">
           <div style="display:flex;justify-content:center;padding:16px 0 12px">
             <${Ring} consumed=${Math.round(cal)} target=${targets.calories}/>
@@ -550,7 +566,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
       if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
       const result = onImport(importedMeals);
       setImportMsg(result === 'merge'
-        ? `Merged ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
+        ? `Integrated ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
         : result === 'replace'
           ? `Imported ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
           : 'Import canceled.');
@@ -560,19 +576,20 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
       e.target.value = '';
     }
   };
+  const chooseDataAction = () => {
+    const action = prompt('Type export or import', 'export')?.trim().toLowerCase();
+    if (action === 'export') onExport();
+    if (action === 'import') importRef.current?.click();
+  };
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%;min-height:0">
       <div style="padding:calc(var(--sat) + 14px) 16px 10px;flex-shrink:0">
         <div style="display:flex;align-items:center;gap:10px">
           <div style="font-family:'Playfair Display',serif;font-size:24px;color:var(--text);flex:1">History</div>
-          <button onClick=${onExport}
+          <button onClick=${chooseDataAction}
             style="background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:0 12px;height:38px;font-size:12px;font-weight:600;cursor:pointer">
-            Export
-          </button>
-          <button onClick=${() => importRef.current?.click()}
-            style="background:var(--card);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:0 12px;height:38px;font-size:12px;font-weight:600;cursor:pointer">
-            Import
+            Data
           </button>
           <input ref=${importRef} type="file" accept="application/json,.json" onChange=${importMeals} style="display:none"/>
         </div>
@@ -581,7 +598,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
             ${importMsg}
           </div>` : null}
       </div>
-      <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
+      <div class="scroll" style="flex:1;padding:0 16px calc(var(--tab-h) + var(--sab) + 16px)">
         <div style="min-height:calc(100% + 1px)">
           ${groups.length === 0 ? html`
             <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Meals will appear here after you log them.</div>` : null}
@@ -617,7 +634,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
 }
 
 /* ── Settings View ──────────────────────────────────────── */
-function SettView({ settings, onSave, onBack }) {
+function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   const [provider,     setProvider]     = useState(settings.provider     || 'anthropic');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
   const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
@@ -628,6 +645,8 @@ function SettView({ settings, onSave, onBack }) {
   const [targetCarbs,   setTargetCarbs]   = useState(String(Math.round(savedTargets.carbs)));
   const [targetFat,     setTargetFat]     = useState(String(Math.round(savedTargets.fat)));
   const [saved,        setSaved]        = useState(false);
+  const [importMsg,    setImportMsg]    = useState('');
+  const importRef = useRef();
 
   const save = () => {
     onSave({
@@ -679,6 +698,26 @@ function SettView({ settings, onSave, onBack }) {
         <span style="font-size:11px;color:var(--muted)">${unit}</span>
       </div>
     </label>`;
+
+  const importMeals = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const importedMeals = Array.isArray(parsed) ? parsed : parsed.meals;
+      if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
+      const result = onImport(importedMeals);
+      setImportMsg(result === 'merge'
+        ? `Integrated ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
+        : result === 'replace'
+          ? `Imported ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
+          : 'Import canceled.');
+    } catch (error) {
+      setImportMsg(`Import failed: ${error.message}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%">
@@ -750,6 +789,23 @@ function SettView({ settings, onSave, onBack }) {
           ${saved ? 'Saved ✓' : 'Save Settings'}
         </button>
 
+        <div style="font-size:12px;color:var(--muted);line-height:1.9;padding:14px;background:var(--card);border-radius:12px;margin-bottom:16px">
+          <div style="color:var(--text);font-weight:600;margin-bottom:8px">Meal Data</div>
+          <div style="display:flex;gap:10px;margin-bottom:8px">
+            <button onClick=${onExport}
+              style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer">
+              Export
+            </button>
+            <button onClick=${() => importRef.current?.click()}
+              style="flex:1;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer">
+              Import
+            </button>
+          </div>
+          <input ref=${importRef} type="file" accept="application/json,.json" onChange=${importMeals} style="display:none"/>
+          <div>${meals.length} meal${meals.length === 1 ? '' : 's'} stored</div>
+          ${importMsg ? html`<div style="color:${importMsg.startsWith('Import failed') ? 'var(--danger)' : importMsg === 'Import canceled.' ? 'var(--muted)' : 'var(--mint)'}">${importMsg}</div>` : null}
+        </div>
+
         <div style="font-size:12px;color:var(--muted);padding:14px;background:var(--card);border-radius:12px;line-height:1.7">
           <div style="color:var(--text);font-weight:600;margin-bottom:6px">📱 Install as app</div>
           <div><strong style="color:var(--text)">iOS Safari:</strong> Share → Add to Home Screen</div>
@@ -815,13 +871,13 @@ function App() {
   const importMeals = importedMeals => {
     const currentCount = meals.length;
     const importedCount = importedMeals.length;
-    const replace = confirm(`Import ${importedCount} meal${importedCount === 1 ? '' : 's'}.\n\nChoose OK to replace your current ${currentCount} meal${currentCount === 1 ? '' : 's'}.\nChoose Cancel to merge with your current meals.`);
-    if (replace) {
+    const mode = prompt(`Import ${importedCount} meal${importedCount === 1 ? '' : 's'}.\n\nType replace or integrate.`, 'integrate')?.trim().toLowerCase();
+    if (mode === 'replace') {
       setMeals(importedMeals);
       saveMeals(importedMeals);
       return 'replace';
     }
-    if (!confirm(`Merge ${importedCount} imported meal${importedCount === 1 ? '' : 's'} with your current ${currentCount} meal${currentCount === 1 ? '' : 's'}?`)) return 'cancel';
+    if (mode !== 'integrate') return 'cancel';
     const byId = new Map(meals.map(meal => [String(meal.id), meal]));
     importedMeals.forEach(meal => {
       const id = meal.id ?? `${meal.date || ''}-${meal.timestamp || ''}-${meal.mealName || Math.random()}`;
@@ -845,13 +901,13 @@ function App() {
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg)">
       <div style="flex:1;overflow:hidden;min-height:0">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
-          view === 'settings' ? html`<${SettView} settings=${settings} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')}/>` :
+          view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onExport=${exportMeals} onImport=${importMeals}/>` :
                                 html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 
       ${view !== 'add' && view !== 'settings' ? html`
-        <div style="position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;background:var(--nav-bg);border-top:1px solid var(--border);padding-bottom:var(--sab);box-shadow:0 -8px 20px rgba(0,0,0,.18)">
+        <div class="tabbar">
           ${NAV.map(item => {
             const isAdd  = item.key === 'add';
             const active = view === item.key;
