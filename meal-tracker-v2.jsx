@@ -232,7 +232,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
         </div>
       </div>
 
-      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"14px 16px"}}>
+      <div style={{flex:1,minHeight:0,overflowY:"scroll",WebkitOverflowScrolling:"touch",overscrollBehaviorY:"auto",touchAction:"pan-y",padding:"14px 16px"}}>
         <div onClick={()=>!img&&fileRef.current?.click()}
           style={{borderRadius:16,overflow:"hidden",marginBottom:12,background:C.card,
             border:img?`1px solid ${C.border}`:`2px dashed ${C.muted}`,
@@ -314,7 +314,7 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
         <span style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".18em"}}>{label}</span>
         <button onClick={onSettings} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙</button>
       </div>
-      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"0 16px 80px"}}>
+      <div style={{flex:1,minHeight:0,overflowY:"scroll",WebkitOverflowScrolling:"touch",overscrollBehaviorY:"auto",touchAction:"pan-y",padding:"0 16px 80px"}}>
         <div style={{display:"flex",justifyContent:"center",padding:"16px 0 12px"}}><Ring consumed={Math.round(cal)} target={DAILY_CAL}/></div>
         <div style={{textAlign:"center",fontSize:12,fontFamily:"'DM Mono',monospace",marginBottom:18,color:rem>=0?C.mint:C.danger}}>
           {rem>=0?`${Math.round(rem)} kcal remaining`:`${Math.abs(Math.round(rem))} kcal over target`}
@@ -350,7 +350,7 @@ function HistView({ meals, onDelete, onEdit }) {
       <div style={{padding:"16px 16px 0",flexShrink:0}}>
         <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,color:C.text,paddingBottom:14}}>History</div>
       </div>
-      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"0 16px 80px"}}>
+      <div style={{flex:1,minHeight:0,overflowY:"scroll",WebkitOverflowScrolling:"touch",overscrollBehaviorY:"auto",touchAction:"pan-y",padding:"0 16px 80px"}}>
         {groups.length===0&&<div style={{textAlign:"center",paddingTop:48,color:C.muted,fontSize:14}}>Meals will appear here after you log them.</div>}
         {groups.map(([date,dayMeals])=>{
           const cal=sumKey(dayMeals,"calories"),p=sumKey(dayMeals,"protein"),c=sumKey(dayMeals,"carbs"),f=sumKey(dayMeals,"fat"),over=cal>DAILY_CAL;
@@ -412,7 +412,7 @@ function SettView({ settings, onSave, onBack }) {
         </div>
       </div>
 
-      <div style={{flex:1,overflowY:"auto",padding:"20px 16px"}}>
+      <div style={{flex:1,minHeight:0,overflowY:"scroll",WebkitOverflowScrolling:"touch",overscrollBehaviorY:"auto",touchAction:"pan-y",padding:"20px 16px"}}>
 
         {/* Provider tabs */}
         <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:".1em",marginBottom:10}}>AI Provider</div>
@@ -499,13 +499,13 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;1,400&family=DM+Sans:wght@400;500;700&family=DM+Mono&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-        body{background:${C.bg};overscroll-behavior:none}
+        body{background:${C.bg}}
         input,textarea{font-size:16px!important}
         input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
         ::-webkit-scrollbar{display:none}
       `}</style>
       <div style={{background:C.bg,height:"100%",maxWidth:480,margin:"0 auto",fontFamily:"'DM Sans',sans-serif",color:C.text,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <div style={{flex:1,overflow:"hidden"}}>
+        <div style={{flex:1,overflow:"hidden",minHeight:0}}>
           {view==="add"      ?<AddView key={editingMeal?.id||"new"} settings={settings} meal={editingMeal} onSave={saveMeal} onCancel={()=>{setEditingMeal(null);setView(editingMeal?editReturnView:"today");}}/>:
            view==="settings" ?<SettView settings={settings} onSave={s=>{updateSettings(s);setView("today");}} onBack={()=>setView("today")}/>:
            view==="history"  ?<HistView meals={meals} onDelete={deleteMeal} onEdit={editMeal}/>:

@@ -82,7 +82,13 @@
     input[type=number]::-webkit-inner-spin-button,
     input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
     ::-webkit-scrollbar { display: none; }
-    .scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .scroll {
+      min-height: 0;
+      overflow-y: scroll;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-y: auto;
+      touch-action: pan-y;
+    }
     a { color: var(--oai); text-decoration: none; }
   </style>
 </head>
@@ -722,7 +728,7 @@ function App() {
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg)">
-      <div style="flex:1;overflow:hidden">
+      <div style="flex:1;overflow:hidden;min-height:0">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
           view === 'settings' ? html`<${SettView} settings=${settings} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} onDelete=${deleteMeal} onEdit=${editMeal}/>` :
