@@ -386,7 +386,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
   };
 
   return html`
-    <div style="display:flex;flex-direction:column;height:100%">
+    <div style="display:flex;flex-direction:column;height:100%;min-height:0">
       <!-- Header -->
       <div style="padding:calc(var(--sat) + 14px) 16px 12px;flex-shrink:0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:12px">
@@ -494,32 +494,34 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
           style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">⚙</button>
       </div>
       <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
-        <div style="display:flex;justify-content:center;padding:16px 0 12px">
-          <${Ring} consumed=${Math.round(cal)} target=${DAILY_CAL}/>
+        <div style="min-height:calc(100% + 1px)">
+          <div style="display:flex;justify-content:center;padding:16px 0 12px">
+            <${Ring} consumed=${Math.round(cal)} target=${DAILY_CAL}/>
+          </div>
+          <div style="text-align:center;font-size:12px;font-family:'DM Mono',monospace;margin-bottom:18px;color:${rem >= 0 ? 'var(--mint)' : 'var(--danger)'}">
+            ${rem >= 0 ? `${Math.round(rem)} kcal remaining` : `${Math.abs(Math.round(rem))} kcal over target`}
+          </div>
+          <div style="display:flex;gap:14px;margin-bottom:24px">
+            <${MBar} label="Protein" value=${protein} max=${150} color="var(--mint)"/>
+            <${MBar} label="Carbs"   value=${carbs}   max=${180} color="var(--sky)"/>
+            <${MBar} label="Fat"     value=${fat}      max=${60}  color="var(--peach)"/>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+            <span style="font-family:'Playfair Display',serif;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">
+              ${today.length === 0 ? 'No meals logged yet' : `${today.length} Meal${today.length > 1 ? 's' : ''} today`}
+            </span>
+            ${today.length > 0 ? html`
+              <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">
+                ${protein.toFixed(0)}P·${carbs.toFixed(0)}C·${fat.toFixed(0)}F
+              </span>` : null}
+          </div>
+          ${sorted.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
+          ${today.length === 0 ? html`
+            <div style="text-align:center;padding-top:36px;color:var(--muted)">
+              <div style="font-size:36px;margin-bottom:10px">🍽</div>
+              <div style="font-size:14px">Tap <strong style="color:var(--accent)">+</strong> to log your first meal</div>
+            </div>` : null}
         </div>
-        <div style="text-align:center;font-size:12px;font-family:'DM Mono',monospace;margin-bottom:18px;color:${rem >= 0 ? 'var(--mint)' : 'var(--danger)'}">
-          ${rem >= 0 ? `${Math.round(rem)} kcal remaining` : `${Math.abs(Math.round(rem))} kcal over target`}
-        </div>
-        <div style="display:flex;gap:14px;margin-bottom:24px">
-          <${MBar} label="Protein" value=${protein} max=${150} color="var(--mint)"/>
-          <${MBar} label="Carbs"   value=${carbs}   max=${180} color="var(--sky)"/>
-          <${MBar} label="Fat"     value=${fat}      max=${60}  color="var(--peach)"/>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
-          <span style="font-family:'Playfair Display',serif;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em">
-            ${today.length === 0 ? 'No meals logged yet' : `${today.length} Meal${today.length > 1 ? 's' : ''} today`}
-          </span>
-          ${today.length > 0 ? html`
-            <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">
-              ${protein.toFixed(0)}P·${carbs.toFixed(0)}C·${fat.toFixed(0)}F
-            </span>` : null}
-        </div>
-        ${sorted.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
-        ${today.length === 0 ? html`
-          <div style="text-align:center;padding-top:36px;color:var(--muted)">
-            <div style="font-size:36px;margin-bottom:10px">🍽</div>
-            <div style="font-size:14px">Tap <strong style="color:var(--accent)">+</strong> to log your first meal</div>
-          </div>` : null}
       </div>
     </div>`;
 }
@@ -528,38 +530,41 @@ function TodayView({ meals, onDelete, onEdit, onSettings }) {
 function HistView({ meals, onDelete, onEdit }) {
   const groups = groupByDate(meals);
   return html`
-    <div style="display:flex;flex-direction:column;height:100%">
+    <div style="display:flex;flex-direction:column;height:100%;min-height:0">
       <div style="padding:calc(var(--sat) + 14px) 16px 0;flex-shrink:0">
         <div style="font-family:'Playfair Display',serif;font-size:24px;color:var(--text);padding-bottom:14px">History</div>
       </div>
       <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
-        ${groups.length === 0 ? html`
-          <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Meals will appear here after you log them.</div>` : null}
-        ${groups.map(([date, dayMeals]) => {
-          const cal = sum(dayMeals, 'calories'), p = sum(dayMeals, 'protein');
-          const c   = sum(dayMeals, 'carbs'),    f = sum(dayMeals, 'fat');
-          const over = cal > DAILY_CAL;
-          const sortedDayMeals = [...dayMeals].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-          return html`
-            <div key=${date} style="margin-bottom:24px">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px">
-                <div>
-                  <div style="font-family:'Playfair Display',serif;font-size:17px;color:var(--text)">${fmtDate(date)}</div>
-                  <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:3px">
-                    ${dayMeals.length} Meal${dayMeals.length === 1 ? '' : 's'}
+        <div style="min-height:calc(100% + 1px)">
+          ${groups.length === 0 ? html`
+            <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Meals will appear here after you log them.</div>` : null}
+          ${groups.map(([date, dayMeals]) => {
+            const cal = sum(dayMeals, 'calories'), p = sum(dayMeals, 'protein');
+            const c   = sum(dayMeals, 'carbs'),    f = sum(dayMeals, 'fat');
+            const over = cal > DAILY_CAL;
+            const sortedDayMeals = [...dayMeals].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            return html`
+              <div key=${date} style="margin-bottom:24px">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px">
+                  <div>
+                    <div style="font-family:'Playfair Display',serif;font-size:17px;color:var(--text)">${fmtDate(date)}</div>
+                    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:3px">
+                      ${dayMeals.length} Meal${dayMeals.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                  <div style="text-align:right">
+                    <div style="font-size:16px;color:${over ? 'var(--danger)' : 'var(--mint)'};font-family:'DM Mono',monospace;font-weight:700">${Math.round(cal)} kcal</div>
+                    <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px">${p.toFixed(0)}P · ${c.toFixed(0)}C · ${f.toFixed(0)}F</div>
                   </div>
                 </div>
-                <div style="text-align:right">
-                  <div style="font-size:16px;color:${over ? 'var(--danger)' : 'var(--mint)'};font-family:'DM Mono',monospace;font-weight:700">${Math.round(cal)} kcal</div>
-                  <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px">${p.toFixed(0)}P · ${c.toFixed(0)}C · ${f.toFixed(0)}F</div>
+                <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
+                  <div style="height:100%;width:${Math.min((cal / DAILY_CAL) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
                 </div>
+                ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
               </div>
-              <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
-                <div style="height:100%;width:${Math.min((cal / DAILY_CAL) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
-              </div>
-              ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
-            </div>`;
-        })}
+            `;
+          })}
+        </div>
       </div>
     </div>`;
 }
