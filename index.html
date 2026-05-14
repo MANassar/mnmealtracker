@@ -494,8 +494,7 @@ function TodayView({ meals, onDelete, onSettings }) {
 
 /* ── History View ───────────────────────────────────────── */
 function HistView({ meals, onDelete }) {
-  const past   = meals.filter(m => m.date !== todayStr());
-  const groups = groupByDate(past);
+  const groups = groupByDate(meals);
   return html`
     <div style="display:flex;flex-direction:column;height:100%">
       <div style="padding:calc(var(--sat) + 14px) 16px 0;flex-shrink:0">
@@ -503,24 +502,30 @@ function HistView({ meals, onDelete }) {
       </div>
       <div class="scroll" style="flex:1;padding:0 16px calc(var(--sab) + 80px)">
         ${groups.length === 0 ? html`
-          <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Past meals will appear here.</div>` : null}
+          <div style="text-align:center;padding-top:48px;color:var(--muted);font-size:14px">Meals will appear here after you log them.</div>` : null}
         ${groups.map(([date, dayMeals]) => {
           const cal = sum(dayMeals, 'calories'), p = sum(dayMeals, 'protein');
           const c   = sum(dayMeals, 'carbs'),    f = sum(dayMeals, 'fat');
           const over = cal > DAILY_CAL;
+          const sortedDayMeals = [...dayMeals].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           return html`
             <div key=${date} style="margin-bottom:24px">
-              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">
-                <span style="font-family:'Playfair Display',serif;font-size:16px;color:var(--text)">${fmtDate(date)}</span>
-                <div style="display:flex;gap:8px;align-items:baseline">
-                  <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">${p.toFixed(0)}P·${c.toFixed(0)}C·${f.toFixed(0)}F</span>
-                  <span style="font-size:13px;color:${over ? 'var(--danger)' : 'var(--mint)'};font-family:'DM Mono',monospace;font-weight:700">${Math.round(cal)}</span>
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px">
+                <div>
+                  <div style="font-family:'Playfair Display',serif;font-size:17px;color:var(--text)">${fmtDate(date)}</div>
+                  <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:3px">
+                    ${dayMeals.length} Meal${dayMeals.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <div style="text-align:right">
+                  <div style="font-size:16px;color:${over ? 'var(--danger)' : 'var(--mint)'};font-family:'DM Mono',monospace;font-weight:700">${Math.round(cal)} kcal</div>
+                  <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px">${p.toFixed(0)}P · ${c.toFixed(0)}C · ${f.toFixed(0)}F</div>
                 </div>
               </div>
               <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
                 <div style="height:100%;width:${Math.min((cal / DAILY_CAL) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
               </div>
-              ${dayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete}/>`)}
+              ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete}/>`)}
             </div>`;
         })}
       </div>
