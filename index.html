@@ -218,7 +218,25 @@ async function callAnthropic(img, desc, key) {
   return (d.content || []).map(b => b.text || '').join('');
 }
 
-async function callOpenAI(img, desc) {
+async function callOpenAI(img, desc, key) {
+  if (key) {
+    const content = [
+      ...(img ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }] : []),
+      { type: 'text', text: PROMPT(desc) },
+    ];
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'gpt-4o', max_tokens: 1000,
+        messages: [{ role: 'user', content }],
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+    return d.choices?.[0]?.message?.content || '';
+  }
+
   const res = await fetch('/.netlify/functions/analyze-meal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -228,6 +246,14 @@ async function callOpenAI(img, desc) {
   if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
   return d.text || '';
 }
+
+const providerColor = provider => provider === 'anthropic' ? 'var(--accent)' : 'var(--oai)';
+const providerBg = provider => provider === 'anthropic' ? 'rgba(201,168,76,.12)' : 'rgba(116,170,156,.12)';
+const providerLabel = provider => provider === 'anthropic' ? 'Claude' : provider === 'openai' ? 'GPT-4o' : 'Server';
+const normalizeProviderSetting = settings =>
+  settings?.provider === 'anthropic' && settings.anthropicKey?.trim() ? 'anthropic' :
+  settings?.provider === 'openai' && settings.oaiKey?.trim() ? 'openai' :
+  'server';
 
 /* ── CalorieRing ────────────────────────────────────────── */
 function Ring({ consumed, target }) {
@@ -271,7 +297,7 @@ function MBar({ label, value, max, color }) {
 /* ── MealCard ───────────────────────────────────────────── */
 function MealCard({ meal, onDelete, onEdit }) {
   const [open, setOpen] = useState(false);
-  const pc   = meal.provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+  const pc   = providerColor(meal.provider);
   const m3   = [['P', meal.protein, 'var(--mint)'], ['C', meal.carbs, 'var(--sky)'], ['F', meal.fat, 'var(--peach)']];
   const m4   = [['Protein', meal.protein, 'var(--mint)'], ['Carbs', meal.carbs, 'var(--sky)'], ['Fat', meal.fat, 'var(--peach)'], ['Fiber', meal.fiber || 0, 'var(--plum)']];
   return html`
@@ -289,8 +315,8 @@ function MealCard({ meal, onDelete, onEdit }) {
           <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
             <span style="font-size:10px;color:var(--muted)">${fmtTime(meal.timestamp)}</span>
             ${meal.provider ? html`
-              <span style="font-size:9px;color:${pc};background:${meal.provider === 'openai' ? 'rgba(116,170,156,.12)' : 'rgba(201,168,76,.12)'};padding:1px 6px;border-radius:3px;letter-spacing:.05em;text-transform:uppercase">
-                ${meal.provider === 'openai' ? 'GPT-4o' : 'Claude'}
+              <span style="font-size:9px;color:${pc};background:${providerBg(meal.provider)};padding:1px 6px;border-radius:3px;letter-spacing:.05em;text-transform:uppercase">
+                ${providerLabel(meal.provider)}
               </span>` : null}
           </div>
           <div style="display:flex;gap:8px;margin-top:6px">
@@ -338,7 +364,13 @@ function MealCard({ meal, onDelete, onEdit }) {
 
 /* ── Add Meal View ──────────────────────────────────────── */
 function AddView({ settings, meal, onSave, onCancel }) {
-  const { provider = 'anthropic', anthropicKey = '' } = settings;
+  const { provider = 'server', anthropicKey = '', oaiKey = '' } = settings;
+  const trimmedAnthropicKey = anthropicKey.trim();
+  const trimmedOaiKey = oaiKey.trim();
+  const activeProvider =
+    provider === 'anthropic' && trimmedAnthropicKey ? 'anthropic' :
+    provider === 'openai' && trimmedOaiKey ? 'openai' :
+    'server';
   const isEditing = Boolean(meal);
   const initialAnalysis = meal ? {
     mealName: meal.mealName,
@@ -362,7 +394,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
   const [editCal,  setEditCal]  = useState(meal ? String(Math.round(meal.calories)) : '');
   const [err,      setErr]      = useState('');
   const fileRef = useRef();
-  const pc = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+  const pc = providerColor(activeProvider);
 
   const pick = async e => {
     const f = e.target.files?.[0]; if (!f) return;
@@ -373,13 +405,12 @@ function AddView({ settings, meal, onSave, onCancel }) {
   const analyze = async () => {
     const trimmedDesc = desc.trim();
     if (!img && !trimmedDesc) { setErr('Please add a photo, a description, or both.'); return; }
-    const key = provider === 'openai' ? 'netlify' : anthropicKey;
-    if (provider === 'anthropic' && !key) { setErr('Anthropic key missing — add it in Settings.'); return; }
+    const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
     setStatus('analyzing'); setErr('');
     try {
-      const raw = provider === 'openai'
-        ? await callOpenAI(img, trimmedDesc)
-        : await callAnthropic(img, trimmedDesc, key);
+      const raw = activeProvider === 'anthropic'
+        ? await callAnthropic(img, trimmedDesc, key)
+        : await callOpenAI(img, trimmedDesc, key);
       const parsed = JSON.parse(raw.replace(/```json|```/gi, '').trim());
       setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
     } catch (e) { setErr(`Analysis failed: ${e.message}`); setStatus('error'); }
@@ -392,7 +423,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
       date: meal?.date || todayStr(),
       timestamp: meal?.timestamp || new Date().toISOString(),
       updatedAt: isEditing ? new Date().toISOString() : undefined,
-      description: desc.trim(), provider,
+      description: desc.trim(), provider: activeProvider,
       imageData: img?.b64 || null, imageType: img?.type || null,
       mealName:    analysis.mealName,
       calories:    parseInt(editCal) || analysis.calories,
@@ -412,8 +443,8 @@ function AddView({ settings, meal, onSave, onCancel }) {
           <button onClick=${onCancel}
             style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">←</button>
           <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text);flex:1">${isEditing ? 'Edit Meal' : 'Add Meal'}</span>
-          <span style="font-size:10px;color:${pc};background:${provider === 'openai' ? 'rgba(116,170,156,.12)' : 'rgba(201,168,76,.12)'};padding:4px 10px;border-radius:20px;border:1px solid ${pc};letter-spacing:.06em;text-transform:uppercase;font-weight:600">
-            ${provider === 'openai' ? 'GPT-4o' : 'Claude'}
+          <span style="font-size:10px;color:${pc};background:${providerBg(activeProvider)};padding:4px 10px;border-radius:20px;border:1px solid ${pc};letter-spacing:.06em;text-transform:uppercase;font-weight:600">
+            ${providerLabel(activeProvider)}
           </span>
         </div>
       </div>
@@ -453,7 +484,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
 
         <!-- Analysis result -->
         ${status === 'review' && analysis ? html`
-          <div style="background:var(--card);border:1px solid rgba(${provider === 'openai' ? '116,170,156' : '201,168,76'},.2);border-radius:16px;padding:14px;margin-bottom:12px">
+          <div style="background:var(--card);border:1px solid rgba(${activeProvider === 'anthropic' ? '201,168,76' : '116,170,156'},.2);border-radius:16px;padding:14px;margin-bottom:12px">
             <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text);margin-bottom:12px">${analysis.mealName}</div>
             <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:12px">
               <span style="font-size:12px;color:var(--muted);flex:1">Calories</span>
@@ -470,7 +501,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
                 </div>`)}
             </div>
             ${analysis.portionNote ? html`
-              <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(${provider === 'openai' ? '116,170,156' : '201,168,76'},.06);border-radius:8px;border-left:2px solid ${pc}">
+              <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(${activeProvider === 'anthropic' ? '201,168,76' : '116,170,156'},.06);border-radius:8px;border-left:2px solid ${pc}">
                 ${analysis.portionNote}
               </div>` : null}
           </div>` : null}
@@ -644,7 +675,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
 
 /* ── Settings View ──────────────────────────────────────── */
 function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
-  const [provider,     setProvider]     = useState(settings.provider     || 'anthropic');
+  const [provider,     setProvider]     = useState(settings.provider     || 'server');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
   const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
   const [theme,        setTheme]        = useState(settings.theme        || 'auto');
@@ -657,9 +688,15 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   const [importMsg,    setImportMsg]    = useState('');
   const importRef = useRef();
 
+  useEffect(() => {
+    if ((provider === 'anthropic' && !anthropicKey.trim()) || (provider === 'openai' && !oaiKey.trim())) {
+      setProvider('server');
+    }
+  }, [provider, anthropicKey, oaiKey]);
+
   const save = () => {
     onSave({
-      provider, anthropicKey, oaiKey: '', theme,
+      provider, anthropicKey, oaiKey, theme,
       targets: {
         calories: asPositiveNumber(targetCal, DEFAULT_TARGETS.calories),
         protein:  asPositiveNumber(targetProtein, DEFAULT_TARGETS.protein),
@@ -670,13 +707,13 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
-  const ProvTab = ({ id, label, sub }) => {
+  const ProvTab = ({ id, label, sub, disabled = false }) => {
     const active = provider === id;
-    const col    = id === 'openai' ? 'var(--oai)' : 'var(--accent)';
-    const bg     = id === 'openai' ? 'rgba(116,170,156,.1)' : 'rgba(201,168,76,.1)';
+    const col    = providerColor(id);
+    const bg     = id === 'anthropic' ? 'rgba(201,168,76,.1)' : 'rgba(116,170,156,.1)';
     return html`
-      <button onClick=${() => setProvider(id)}
-        style="flex:1;padding:12px 8px;border-radius:10px;border:1px solid ${active ? col : 'var(--border)'};background:${active ? bg : 'none'};cursor:pointer;text-align:center;transition:all .2s">
+      <button disabled=${disabled} onClick=${() => !disabled && setProvider(id)}
+        style="flex:1;padding:12px 8px;border-radius:10px;border:1px solid ${active ? col : 'var(--border)'};background:${active ? bg : 'none'};cursor:${disabled ? 'not-allowed' : 'pointer'};text-align:center;transition:all .2s;opacity:${disabled ? .45 : 1}">
         <div style="font-size:13px;font-weight:600;color:${active ? col : 'var(--muted)'}">${label}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:2px">${sub}</div>
       </button>`;
@@ -696,7 +733,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
     onBack();
   };
 
-  const activeColor = provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+  const activeColor = providerColor(provider);
 
   const TargetInput = ({ label, value, onInput, color, unit }) => html`
     <label style="display:block">
@@ -743,8 +780,9 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
         <!-- Provider selector -->
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">AI Provider</div>
         <div style="display:flex;gap:10px;margin-bottom:22px">
-          <${ProvTab} id="anthropic" label="Anthropic" sub="Claude Sonnet 4"/>
-          <${ProvTab} id="openai"    label="OpenAI"    sub="GPT-4o"/>
+          <${ProvTab} id="server"    label="Server"    sub="Netlify key"/>
+          <${ProvTab} id="anthropic" label="Anthropic" sub="Manual key" disabled=${!anthropicKey.trim()}/>
+          <${ProvTab} id="openai"    label="OpenAI"    sub="Manual key" disabled=${!oaiKey.trim()}/>
         </div>
 
         <!-- Appearance selector -->
@@ -778,17 +816,17 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
           </div>
         </div>
 
-        <!-- OpenAI connection -->
+        <!-- OpenAI key -->
         <div style="margin-bottom:24px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">OpenAI Connection</span>
+            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">OpenAI API Key</span>
             ${provider === 'openai' ? html`<span style="font-size:10px;color:var(--oai);font-weight:600">● Active</span>` : null}
           </div>
-          <div style="width:100%;background:var(--card);border:1px solid ${provider === 'openai' ? 'rgba(116,170,156,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:13px;padding:14px;box-sizing:border-box;margin-bottom:6px;line-height:1.5">
-            Uses the OPENAI_API_KEY environment variable in your Netlify Function.
-          </div>
+          <input type="password" value=${oaiKey} onInput=${e => setOaiKey(e.target.value)}
+            placeholder="sk-proj-…"
+            style="width:100%;background:var(--card);border:1px solid ${provider === 'openai' ? 'rgba(116,170,156,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;margin-bottom:6px"/>
           <div style="font-size:11px;color:var(--muted);line-height:1.5">
-            The key is never stored in this browser app.
+            Optional. Leave empty to use the Server provider.
           </div>
         </div>
 
@@ -829,7 +867,10 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
 function App() {
   const stored  = loadSettings();
   const [meals,   setMeals]    = useState(() => loadMeals());
-  const [settings,setSettings] = useState(() => ({ provider:'anthropic', anthropicKey:'', oaiKey:'', theme:'auto', ...stored }));
+  const [settings,setSettings] = useState(() => {
+    const merged = { provider:'server', anthropicKey:'', oaiKey:'', theme:'auto', ...stored };
+    return { ...merged, provider: normalizeProviderSetting(merged) };
+  });
   const [view,    setView]     = useState('today');
   const [editingMeal, setEditingMeal] = useState(null);
   const [editReturnView, setEditReturnView] = useState('today');
@@ -858,7 +899,11 @@ function App() {
   const deleteMeal = id => {
     const u = meals.filter(m => m.id !== id); setMeals(u); saveMeals(u);
   };
-  const updateSettings = s => { setSettings(s); saveSettings(s); };
+  const updateSettings = s => {
+    const normalized = { ...s, provider: normalizeProviderSetting(s) };
+    setSettings(normalized);
+    saveSettings(normalized);
+  };
   const targets = normalizeTargets(settings);
   const exportMeals = () => {
     const data = {
@@ -904,7 +949,7 @@ function App() {
     { key: 'history', icon: '≡', label: 'History'  },
   ];
 
-  const navAccent = settings.provider === 'openai' ? 'var(--oai)' : 'var(--accent)';
+  const navAccent = providerColor(settings.provider);
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg);padding-bottom:${view !== 'add' && view !== 'settings' ? 'calc(var(--tab-h) + var(--sab))' : '0'}">
