@@ -218,22 +218,15 @@ async function callAnthropic(img, desc, key) {
   return (d.content || []).map(b => b.text || '').join('');
 }
 
-async function callOpenAI(img, desc, key) {
-  const content = [
-    ...(img ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }] : []),
-    { type: 'text', text: PROMPT(desc) },
-  ];
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+async function callOpenAI(img, desc) {
+  const res = await fetch('/.netlify/functions/analyze-meal', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-    body: JSON.stringify({
-      model: 'gpt-4o', max_tokens: 1000,
-      messages: [{ role: 'user', content }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ img, desc }),
   });
   const d = await res.json();
-  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
-  return d.choices?.[0]?.message?.content || '';
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d.text || '';
 }
 
 /* ── CalorieRing ────────────────────────────────────────── */
@@ -345,7 +338,7 @@ function MealCard({ meal, onDelete, onEdit }) {
 
 /* ── Add Meal View ──────────────────────────────────────── */
 function AddView({ settings, meal, onSave, onCancel }) {
-  const { provider = 'anthropic', anthropicKey = '', oaiKey = '' } = settings;
+  const { provider = 'anthropic', anthropicKey = '' } = settings;
   const isEditing = Boolean(meal);
   const initialAnalysis = meal ? {
     mealName: meal.mealName,
@@ -380,12 +373,12 @@ function AddView({ settings, meal, onSave, onCancel }) {
   const analyze = async () => {
     const trimmedDesc = desc.trim();
     if (!img && !trimmedDesc) { setErr('Please add a photo, a description, or both.'); return; }
-    const key = provider === 'openai' ? oaiKey : anthropicKey;
-    if (!key) { setErr(`${provider === 'openai' ? 'OpenAI' : 'Anthropic'} key missing — add it in Settings.`); return; }
+    const key = provider === 'openai' ? 'netlify' : anthropicKey;
+    if (provider === 'anthropic' && !key) { setErr('Anthropic key missing — add it in Settings.'); return; }
     setStatus('analyzing'); setErr('');
     try {
       const raw = provider === 'openai'
-        ? await callOpenAI(img, trimmedDesc, key)
+        ? await callOpenAI(img, trimmedDesc)
         : await callAnthropic(img, trimmedDesc, key);
       const parsed = JSON.parse(raw.replace(/```json|```/gi, '').trim());
       setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
@@ -666,7 +659,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
 
   const save = () => {
     onSave({
-      provider, anthropicKey, oaiKey, theme,
+      provider, anthropicKey, oaiKey: '', theme,
       targets: {
         calories: asPositiveNumber(targetCal, DEFAULT_TARGETS.calories),
         protein:  asPositiveNumber(targetProtein, DEFAULT_TARGETS.protein),
@@ -785,17 +778,17 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
           </div>
         </div>
 
-        <!-- OpenAI key -->
+        <!-- OpenAI connection -->
         <div style="margin-bottom:24px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">OpenAI API Key</span>
+            <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">OpenAI Connection</span>
             ${provider === 'openai' ? html`<span style="font-size:10px;color:var(--oai);font-weight:600">● Active</span>` : null}
           </div>
-          <input type="password" value=${oaiKey} onInput=${e => setOaiKey(e.target.value)}
-            placeholder="sk-proj-…"
-            style="width:100%;background:var(--card);border:1px solid ${provider === 'openai' ? 'rgba(116,170,156,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;margin-bottom:6px"/>
+          <div style="width:100%;background:var(--card);border:1px solid ${provider === 'openai' ? 'rgba(116,170,156,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:13px;padding:14px;box-sizing:border-box;margin-bottom:6px;line-height:1.5">
+            Uses the OPENAI_API_KEY environment variable in your Netlify Function.
+          </div>
           <div style="font-size:11px;color:var(--muted);line-height:1.5">
-            Get a key at <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a>
+            The key is never stored in this browser app.
           </div>
         </div>
 
