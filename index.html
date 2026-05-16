@@ -152,6 +152,8 @@ const APP_VERSION = window.APP_VERSION || '0.1.1';
 const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
 
 /* ── Storage ────────────────────────────────────────────── */
+// Meals and settings are local-first. Nothing here leaves the device unless
+// the user calls an AI provider or exports/imports a backup file.
 const loadMeals    = () => { try { return JSON.parse(localStorage.getItem(MEALS_KEY) || '[]'); } catch { return []; } };
 const saveMeals    = m  => { try { localStorage.setItem(MEALS_KEY, JSON.stringify(m)); } catch {} };
 const loadSettings = () => { try { return JSON.parse(localStorage.getItem(SETT_KEY)  || '{}'); } catch { return {}; } };
@@ -174,12 +176,14 @@ const normalizeTargets = settings => ({
   fat:      asPositiveNumber(settings?.targets?.fat,      DEFAULT_TARGETS.fat),
 });
 const groupByDate = meals => {
+  // History is grouped newest-first by the meal's assigned log date.
   const g = {};
   meals.forEach(m => { (g[m.date] = g[m.date] || []).push(m); });
   return Object.entries(g).sort(([a], [b]) => b.localeCompare(a));
 };
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 const applyTheme = theme => {
+  // Persisted theme values are normalized so older/bad settings do not break UI.
   const mode = theme === 'light' || theme === 'dark' ? theme : 'auto';
   if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.dataset.theme = mode;
@@ -189,6 +193,8 @@ const applyTheme = theme => {
 applyTheme(loadSettings().theme);
 
 /* ── API ────────────────────────────────────────────────── */
+// Both providers are asked for the same strict JSON shape so the UI can parse
+// and display one shared analysis object regardless of provider.
 const PROMPT = desc =>
 `You are a clinical nutritionist. Analyze the food from the image, description, or both.${desc ? ` User context: "${desc}"` : ''}
 Return ONLY a raw JSON object — no markdown, no explanation:
@@ -196,6 +202,7 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 Calories in kcal. Macros in grams. Do not underestimate portions.`;
 
 async function callAnthropic(img, desc, key) {
+  // Anthropic manual mode uses the user's own key directly from the browser.
   const content = [
     ...(img ? [{ type: 'image', source: { type: 'base64', media_type: img.type, data: img.b64 } }] : []),
     { type: 'text', text: PROMPT(desc) },
@@ -220,6 +227,7 @@ async function callAnthropic(img, desc, key) {
 
 async function callOpenAI(img, desc, key) {
   if (key) {
+    // Manual OpenAI mode mirrors the old browser-direct flow using the user's key.
     const content = [
       ...(img ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }] : []),
       { type: 'text', text: PROMPT(desc) },
@@ -237,6 +245,7 @@ async function callOpenAI(img, desc, key) {
     return d.choices?.[0]?.message?.content || '';
   }
 
+  // Server mode routes through Netlify so the app owner's OpenAI key stays private.
   const res = await fetch('/.netlify/functions/analyze-meal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -251,12 +260,14 @@ const providerColor = provider => provider === 'anthropic' ? 'var(--accent)' : '
 const providerBg = provider => provider === 'anthropic' ? 'rgba(201,168,76,.12)' : 'rgba(116,170,156,.12)';
 const providerLabel = provider => provider === 'anthropic' ? 'Claude' : provider === 'openai' ? 'GPT-4o' : 'Server';
 const normalizeProviderSetting = settings =>
+  // Manual providers are only considered active when their matching key exists.
   settings?.provider === 'anthropic' && settings.anthropicKey?.trim() ? 'anthropic' :
   settings?.provider === 'openai' && settings.oaiKey?.trim() ? 'openai' :
   'server';
 
 /* ── CalorieRing ────────────────────────────────────────── */
 function Ring({ consumed, target }) {
+  // The ring caps visual progress at 100% while still showing over-target totals.
   const r = 56, sw = 9, circ = 2 * Math.PI * r;
   const pct = Math.min(consumed / target, 1), over = consumed > target;
   return html`
@@ -281,6 +292,7 @@ function Ring({ consumed, target }) {
 
 /* ── MacroBar ───────────────────────────────────────────── */
 function MBar({ label, value, max, color }) {
+  // Macro bars share the same capped-progress behavior as calories.
   const pct = Math.min((value / max) * 100, 100);
   return html`
     <div style="flex:1;min-width:0">
@@ -296,6 +308,7 @@ function MBar({ label, value, max, color }) {
 
 /* ── MealCard ───────────────────────────────────────────── */
 function MealCard({ meal, onDelete, onEdit }) {
+  // Cards stay compact by default and expand inline for details/actions.
   const [open, setOpen] = useState(false);
   const pc   = providerColor(meal.provider);
   const m3   = [['P', meal.protein, 'var(--mint)'], ['C', meal.carbs, 'var(--sky)'], ['F', meal.fat, 'var(--peach)']];
@@ -364,6 +377,7 @@ function MealCard({ meal, onDelete, onEdit }) {
 
 /* ── Add Meal View ──────────────────────────────────────── */
 function AddView({ settings, meal, onSave, onCancel }) {
+  // AddView also powers editing; an existing meal preloads analysis and media.
   const { provider = 'server', anthropicKey = '', oaiKey = '' } = settings;
   const trimmedAnthropicKey = anthropicKey.trim();
   const trimmedOaiKey = oaiKey.trim();
@@ -389,6 +403,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
     type: meal.imageType,
   } : null);
   const [desc,     setDesc]     = useState(meal?.description || '');
+  const [mealDate, setMealDate] = useState(meal?.date || todayStr());
   const [status,   setStatus]   = useState(meal ? 'review' : 'idle');
   const [analysis, setAnalysis] = useState(initialAnalysis);
   const [editCal,  setEditCal]  = useState(meal ? String(Math.round(meal.calories)) : '');
@@ -397,12 +412,14 @@ function AddView({ settings, meal, onSave, onCancel }) {
   const pc = providerColor(activeProvider);
 
   const pick = async e => {
+    // Choosing a new photo invalidates the current analysis until re-run.
     const f = e.target.files?.[0]; if (!f) return;
     setAnalysis(null); setStatus('idle');
     setImg({ url: URL.createObjectURL(f), b64: await fileToB64(f), type: f.type });
   };
 
   const analyze = async () => {
+    // Date edits are intentionally independent; only this button calls AI again.
     const trimmedDesc = desc.trim();
     if (!img && !trimmedDesc) { setErr('Please add a photo, a description, or both.'); return; }
     const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
@@ -417,10 +434,11 @@ function AddView({ settings, meal, onSave, onCancel }) {
   };
 
   const log = () => {
+    // Saving reuses the current analysis. If only the date changed, no AI call runs.
     if (!analysis) return;
     onSave({
       id: meal?.id || Date.now(),
-      date: meal?.date || todayStr(),
+      date: mealDate || meal?.date || todayStr(),
       timestamp: meal?.timestamp || new Date().toISOString(),
       updatedAt: isEditing ? new Date().toISOString() : undefined,
       description: desc.trim(), provider: activeProvider,
@@ -505,6 +523,16 @@ function AddView({ settings, meal, onSave, onCancel }) {
                 ${analysis.portionNote}
               </div>` : null}
           </div>` : null}
+
+        <!-- Meal date editor -->
+        ${isEditing ? html`
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
+            <label style="display:block">
+              <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Meal Date</div>
+              <input type="date" value=${mealDate} onInput=${e => setMealDate(e.target.value)}
+                style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:13px 12px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box"/>
+            </label>
+          </div>` : null}
       </div>
 
       <!-- CTA -->
@@ -530,6 +558,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
 
 /* ── Today View ─────────────────────────────────────────── */
 function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
+  // Today is derived from the full meal list each render, keeping storage simple.
   const today   = meals.filter(m => m.date === todayStr());
   const cal     = sum(today, 'calories'), protein = sum(today, 'protein');
   const carbs   = sum(today, 'carbs'),    fat     = sum(today, 'fat');
@@ -578,11 +607,13 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
 
 /* ── History View ───────────────────────────────────────── */
 function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
+  // History owns its small data menu, while actual import/export lives in App.
   const groups = groupByDate(meals);
   const [importMsg, setImportMsg] = useState('');
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const importRef = useRef();
   const importMeals = async e => {
+    // Both Settings and History share the same import contract: an array or {meals}.
     const file = e.target.files?.[0];
     if (!file) return;
     try {
@@ -602,14 +633,17 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
     }
   };
   const chooseDataAction = () => {
+    // A lightweight custom menu keeps data actions reachable without a full modal.
     setDataMenuOpen(true);
   };
   const menuButtonStyle = "width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;text-align:left";
   const exportFromMenu = () => {
+    // Close the menu before triggering the browser download flow.
     setDataMenuOpen(false);
     onExport();
   };
   const importFromMenu = () => {
+    // Delegate to the hidden file input so mobile browsers show their native picker.
     setDataMenuOpen(false);
     importRef.current?.click();
   };
@@ -675,6 +709,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
 
 /* ── Settings View ──────────────────────────────────────── */
 function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
+  // Settings edits are staged locally until Save so Back can discard theme changes.
   const [provider,     setProvider]     = useState(settings.provider     || 'server');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
   const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
@@ -689,12 +724,14 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   const importRef = useRef();
 
   useEffect(() => {
+    // If a manual key is removed while selected, fall back to the server provider.
     if ((provider === 'anthropic' && !anthropicKey.trim()) || (provider === 'openai' && !oaiKey.trim())) {
       setProvider('server');
     }
   }, [provider, anthropicKey, oaiKey]);
 
   const save = () => {
+    // Normalize numeric targets on save rather than on every keystroke.
     onSave({
       provider, anthropicKey, oaiKey, theme,
       targets: {
@@ -708,6 +745,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   };
 
   const ProvTab = ({ id, label, sub, disabled = false }) => {
+    // Provider tabs are disabled until their required manual key exists.
     const active = provider === id;
     const col    = providerColor(id);
     const bg     = id === 'anthropic' ? 'rgba(201,168,76,.1)' : 'rgba(116,170,156,.1)';
@@ -720,6 +758,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   };
 
   const ThemeTab = ({ id, label }) => {
+    // Theme changes preview immediately; Back restores the previously saved theme.
     const active = theme === id;
     return html`
       <button onClick=${() => { setTheme(id); applyTheme(id); }}
@@ -729,12 +768,14 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   };
 
   const back = () => {
+    // Undo any unsaved theme preview before leaving Settings.
     applyTheme(settings.theme);
     onBack();
   };
 
   const activeColor = providerColor(provider);
 
+  // Shared target editor used for calories and macro goals.
   const TargetInput = ({ label, value, onInput, color, unit }) => html`
     <label style="display:block">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">${label}</div>
@@ -746,6 +787,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
     </label>`;
 
   const importMeals = async e => {
+    // Settings duplicates History import affordance for users who manage data here.
     const file = e.target.files?.[0];
     if (!file) return;
     try {
@@ -865,6 +907,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
 
 /* ── Root App ───────────────────────────────────────────── */
 function App() {
+  // App is the state owner: child views receive callbacks instead of touching storage.
   const stored  = loadSettings();
   const [meals,   setMeals]    = useState(() => loadMeals());
   const [settings,setSettings] = useState(() => {
@@ -876,6 +919,7 @@ function App() {
   const [editReturnView, setEditReturnView] = useState('today');
 
   useEffect(() => {
+    // Keep app chrome and browser theme color in sync with saved settings.
     applyTheme(settings.theme);
     const mq = window.matchMedia?.('(prefers-color-scheme: light)');
     const onChange = () => applyTheme(settings.theme);
@@ -888,24 +932,29 @@ function App() {
   }, [settings.theme]);
 
   const addMeal = meal => {
+    // New meals are prepended so the latest log appears first everywhere.
     const u = [meal, ...meals]; setMeals(u); saveMeals(u); setView('today');
   };
   const updateMeal = meal => {
+    // Editing preserves the meal id and returns to the view that launched editing.
     const u = meals.map(m => m.id === meal.id ? meal : m);
     setMeals(u); saveMeals(u); setEditingMeal(null); setView(editReturnView);
   };
   const saveMeal = meal => editingMeal ? updateMeal(meal) : addMeal(meal);
   const editMeal = meal => { setEditingMeal(meal); setEditReturnView(view); setView('add'); };
   const deleteMeal = id => {
+    // Deletion is immediate after the card-level confirmation.
     const u = meals.filter(m => m.id !== id); setMeals(u); saveMeals(u);
   };
   const updateSettings = s => {
+    // Provider settings are sanitized so stale manual selections cannot break Analyze.
     const normalized = { ...s, provider: normalizeProviderSetting(s) };
     setSettings(normalized);
     saveSettings(normalized);
   };
   const targets = normalizeTargets(settings);
   const exportMeals = () => {
+    // Export intentionally includes only meal data, not API keys or settings.
     const data = {
       app: 'mnmealtracker',
       version: APP_VERSION,
@@ -923,6 +972,7 @@ function App() {
     URL.revokeObjectURL(url);
   };
   const importMeals = importedMeals => {
+    // Import supports replace or integrate; integrate de-dupes by stable meal id.
     const currentCount = meals.length;
     const importedCount = importedMeals.length;
     const mode = prompt(`Import ${importedCount} meal${importedCount === 1 ? '' : 's'}.\n\nType replace or integrate.`, 'integrate')?.trim().toLowerCase();
