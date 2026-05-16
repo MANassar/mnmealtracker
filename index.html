@@ -173,6 +173,24 @@ const rememberDeletedMeal = meal => {
 const clearDeletedMeals = () => {
   try { localStorage.setItem(DELETED_MEALS_KEY, '[]'); } catch {}
 };
+const resetMealRecovery = () => {
+  // Replace imports should start a new truth set; old snapshots can otherwise
+  // reintroduce stale duplicates with outdated dates.
+  try {
+    localStorage.removeItem(MEALS_BACKUP_KEY);
+    localStorage.removeItem(MEALS_SNAP_KEY);
+    localStorage.setItem(DELETED_MEALS_KEY, '[]');
+  } catch {}
+};
+const purgeMealStorage = () => {
+  // Full purge used by the explicit Clear all meals flow.
+  try {
+    localStorage.removeItem(MEALS_KEY);
+    localStorage.removeItem(MEALS_BACKUP_KEY);
+    localStorage.removeItem(MEALS_SNAP_KEY);
+    localStorage.removeItem(DELETED_MEALS_KEY);
+  } catch {}
+};
 const slimMeal = meal => {
   // Backup copies intentionally drop image data so they stay tiny and reliable.
   const { imageData, imageType, ...rest } = meal || {};
@@ -188,18 +206,23 @@ const mergeMealLists = (...lists) => {
   });
   return [...byId.values()].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 };
+const mealSignature = meal => [
+  meal?.timestamp || '',
+  String(meal?.mealName || '').trim().toLowerCase(),
+  Math.round(Number(meal?.calories) || 0),
+].join('|');
 const loadMealBackup = () => {
   const backup = mealListFrom(parseStoredJson(MEALS_BACKUP_KEY, { meals: [] }));
   const snapshots = parseStoredJson(MEALS_SNAP_KEY, []);
   return mergeMealLists(backup, ...snapshots.map(s => mealListFrom(s)));
 };
-const saveMealBackup = meals => {
+const saveMealBackup = (meals, { resetSnapshots = false } = {}) => {
   // A latest backup plus a few snapshots gives us recovery points after bad writes.
   const slim = meals.map(slimMeal);
   const now = new Date().toISOString();
   try {
     localStorage.setItem(MEALS_BACKUP_KEY, JSON.stringify({ updatedAt: now, meals: slim }));
-    const previous = parseStoredJson(MEALS_SNAP_KEY, []);
+    const previous = resetSnapshots ? [] : parseStoredJson(MEALS_SNAP_KEY, []);
     const snapshots = [{ updatedAt: now, meals: slim }, ...previous].slice(0, 5);
     localStorage.setItem(MEALS_SNAP_KEY, JSON.stringify(snapshots));
   } catch {}
@@ -210,16 +233,25 @@ const loadMeals    = () => {
   const primary = mealListFrom(parseStoredJson(MEALS_KEY, []));
   return mergeMealLists(primary, loadMealBackup());
 };
-const saveMeals    = m  => {
+const saveMeals    = (m, options = {}) => {
   // Return a result instead of swallowing write failures. Mobile localStorage can
   // fill quickly because meals may include image previews.
-  saveMealBackup(m);
+  const resetSnapshots = Boolean(options.resetSnapshots);
+  if (resetSnapshots) resetMealRecovery();
+  saveMealBackup(m, { resetSnapshots });
   try {
     localStorage.setItem(MEALS_KEY, JSON.stringify(m));
-    saveMealBackup(m);
-    return { ok: true };
+    saveMealBackup(m, { resetSnapshots });
+    return { ok: true, meals: m, slimmed: false };
   } catch (error) {
-    return { ok: false, error };
+    const slim = m.map(slimMeal);
+    try {
+      localStorage.setItem(MEALS_KEY, JSON.stringify(slim));
+      saveMealBackup(slim, { resetSnapshots });
+      return { ok: true, meals: slim, slimmed: true, error };
+    } catch {
+      return { ok: false, error };
+    }
   }
 };
 const loadSettings = () => { try { return JSON.parse(localStorage.getItem(SETT_KEY)  || '{}'); } catch { return {}; } };
@@ -708,12 +740,24 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
 }
 
 /* ── History View ───────────────────────────────────────── */
-function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
+function HistView({ meals, targets, onDelete, onEdit, onExport, onImport, onClear }) {
   // History owns its small data menu, while actual import/export lives in App.
   const groups = groupByDate(meals);
   const [importMsg, setImportMsg] = useState('');
+  const [pendingImport, setPendingImport] = useState(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [dataMenuOpen, setDataMenuOpen] = useState(false);
   const importRef = useRef();
+  const finishImport = mode => {
+    if (!pendingImport) return;
+    const result = mode ? onImport(pendingImport.meals, mode) : 'cancel';
+    setImportMsg(result === 'merge'
+      ? `Integrated ${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'}.`
+      : result === 'replace'
+        ? `Imported ${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'}.`
+        : 'Import canceled.');
+    setPendingImport(null);
+  };
   const importMeals = async e => {
     // Both Settings and History share the same import contract: an array or {meals}.
     const file = e.target.files?.[0];
@@ -722,12 +766,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
       const parsed = JSON.parse(await file.text());
       const importedMeals = Array.isArray(parsed) ? parsed : parsed.meals;
       if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
-      const result = onImport(importedMeals);
-      setImportMsg(result === 'merge'
-        ? `Integrated ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
-        : result === 'replace'
-          ? `Imported ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
-          : 'Import canceled.');
+      setPendingImport({ meals: importedMeals });
     } catch (error) {
       setImportMsg(`Import failed: ${error.message}`);
     } finally {
@@ -749,6 +788,15 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
     setDataMenuOpen(false);
     importRef.current?.click();
   };
+  const clearFromMenu = () => {
+    setDataMenuOpen(false);
+    setConfirmClear(true);
+  };
+  const confirmClearMeals = () => {
+    const result = onClear();
+    setImportMsg(result === 'clear' ? 'Cleared all meals.' : 'Clear canceled.');
+    setConfirmClear(false);
+  };
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%;min-height:0">
@@ -766,7 +814,27 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport }) {
             <div style="width:min(220px,calc(100vw - 32px));background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px;box-shadow:0 14px 34px rgba(0,0,0,.28)">
               <button onClick=${importFromMenu} style=${menuButtonStyle}>Import</button>
               <button onClick=${exportFromMenu} style="${menuButtonStyle};margin-top:8px">Export</button>
+              <button onClick=${clearFromMenu} style="${menuButtonStyle};margin-top:8px;color:var(--danger)">Clear all meals</button>
               <button onClick=${() => setDataMenuOpen(false)} style="${menuButtonStyle};margin-top:8px;color:var(--muted)">Cancel</button>
+            </div>
+          </div>` : null}
+        ${confirmClear ? html`
+          <div style="position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;padding:16px">
+            <div style="width:min(420px,100%);background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 -14px 34px rgba(0,0,0,.32)">
+              <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Clear all meals?</div>
+              <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px">This permanently removes every meal and all recovery backups from this device.</div>
+              <button onClick=${confirmClearMeals} style="${menuButtonStyle};background:var(--danger);color:#fff;border-color:var(--danger);text-align:center">Clear all meals</button>
+              <button onClick=${() => setConfirmClear(false)} style="${menuButtonStyle};margin-top:8px;color:var(--muted);text-align:center">Cancel</button>
+            </div>
+          </div>` : null}
+        ${pendingImport ? html`
+          <div style="position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;padding:16px">
+            <div style="width:min(420px,100%);background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 -14px 34px rgba(0,0,0,.32)">
+              <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Import meal backup</div>
+              <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px">${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'} found</div>
+              <button onClick=${() => finishImport('replace')} style="${menuButtonStyle};background:var(--oai);color:#0c1a10;border-color:var(--oai);text-align:center">Replace current meals</button>
+              <button onClick=${() => finishImport('integrate')} style="${menuButtonStyle};margin-top:8px;text-align:center">Integrate with current meals</button>
+              <button onClick=${() => finishImport(null)} style="${menuButtonStyle};margin-top:8px;color:var(--muted);text-align:center">Cancel</button>
             </div>
           </div>` : null}
         ${importMsg ? html`
@@ -823,6 +891,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
   const [targetFat,     setTargetFat]     = useState(String(Math.round(savedTargets.fat)));
   const [saved,        setSaved]        = useState(false);
   const [importMsg,    setImportMsg]    = useState('');
+  const [pendingImport, setPendingImport] = useState(null);
   const importRef = useRef();
 
   useEffect(() => {
@@ -888,6 +957,17 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
       </div>
     </label>`;
 
+  const finishImport = mode => {
+    if (!pendingImport) return;
+    const result = mode ? onImport(pendingImport.meals, mode) : 'cancel';
+    setImportMsg(result === 'merge'
+      ? `Integrated ${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'}.`
+      : result === 'replace'
+        ? `Imported ${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'}.`
+        : 'Import canceled.');
+    setPendingImport(null);
+  };
+
   const importMeals = async e => {
     // Settings duplicates History import affordance for users who manage data here.
     const file = e.target.files?.[0];
@@ -896,12 +976,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
       const parsed = JSON.parse(await file.text());
       const importedMeals = Array.isArray(parsed) ? parsed : parsed.meals;
       if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
-      const result = onImport(importedMeals);
-      setImportMsg(result === 'merge'
-        ? `Integrated ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
-        : result === 'replace'
-          ? `Imported ${importedMeals.length} meal${importedMeals.length === 1 ? '' : 's'}.`
-          : 'Import canceled.');
+      setPendingImport({ meals: importedMeals });
     } catch (error) {
       setImportMsg(`Import failed: ${error.message}`);
     } finally {
@@ -911,6 +986,25 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%">
+      ${pendingImport ? html`
+        <div style="position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;padding:16px">
+          <div style="width:min(420px,100%);background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 -14px 34px rgba(0,0,0,.32)">
+            <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Import meal backup</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px">${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'} found</div>
+            <button onClick=${() => finishImport('replace')}
+              style="width:100%;background:var(--oai);border:1px solid var(--oai);color:#0c1a10;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;text-align:center">
+              Replace current meals
+            </button>
+            <button onClick=${() => finishImport('integrate')}
+              style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;text-align:center;margin-top:8px">
+              Integrate with current meals
+            </button>
+            <button onClick=${() => finishImport(null)}
+              style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;text-align:center;margin-top:8px">
+              Cancel
+            </button>
+          </div>
+        </div>` : null}
       <div style="padding:calc(var(--sat) + 14px) 16px 12px;flex-shrink:0;border-bottom:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:12px">
           <button onClick=${back}
@@ -1034,16 +1128,18 @@ function App() {
     };
   }, [settings.theme]);
 
-  const persistMeals = nextMeals => {
+  const persistMeals = (nextMeals, options = {}) => {
     // Do not update UI state unless persistence succeeds; otherwise a reload
     // would make the just-entered meal seem to disappear.
-    const result = saveMeals(nextMeals);
+    const result = saveMeals(nextMeals, options);
     if (!result.ok) {
       setStorageErr('Meal was not saved. Storage is full; export a backup or delete older meals/photos.');
       return false;
     }
-    setStorageErr('');
-    setMeals(nextMeals);
+    setStorageErr(result.slimmed
+      ? 'Saved without meal photos because browser storage was full.'
+      : '');
+    setMeals(result.meals);
     return true;
   };
 
@@ -1064,6 +1160,13 @@ function App() {
     const deletedMeal = meals.find(m => m.id === id) || { id };
     const u = meals.filter(m => m.id !== id);
     if (persistMeals(u)) rememberDeletedMeal(deletedMeal);
+  };
+  const clearMeals = () => {
+    // Clear means purge all meal stores, including recovery backups and tombstones.
+    purgeMealStorage();
+    setStorageErr('');
+    setMeals([]);
+    return 'clear';
   };
   const updateSettings = s => {
     // Provider settings are sanitized so stale manual selections cannot break Analyze.
@@ -1090,20 +1193,20 @@ function App() {
     a.remove();
     URL.revokeObjectURL(url);
   };
-  const importMeals = importedMeals => {
+  const importMeals = (importedMeals, mode) => {
     // Import supports replace or integrate; integrate de-dupes by stable meal id.
-    const currentCount = meals.length;
     const importedCount = importedMeals.length;
-    const mode = prompt(`Import ${importedCount} meal${importedCount === 1 ? '' : 's'}.\n\nType replace or integrate.`, 'integrate')?.trim().toLowerCase();
     if (mode === 'replace') {
-      clearDeletedMeals();
-      return persistMeals(importedMeals) ? 'replace' : 'cancel';
+      return persistMeals(importedMeals, { resetSnapshots: true }) ? 'replace' : 'cancel';
     }
     if (mode !== 'integrate') return 'cancel';
     const byId = new Map(meals.map(meal => [String(meal.id), meal]));
+    const signatureToId = new Map(meals.map(meal => [mealSignature(meal), String(meal.id)]));
     importedMeals.forEach(meal => {
       const id = meal.id ?? `${meal.date || ''}-${meal.timestamp || ''}-${meal.mealName || Math.random()}`;
-      byId.set(String(id), { ...meal, id });
+      const existingId = signatureToId.get(mealSignature(meal));
+      if (existingId) byId.set(existingId, { ...meal, id: existingId });
+      else byId.set(String(id), { ...meal, id });
     });
     const merged = [...byId.values()].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
     return persistMeals(merged) ? 'merge' : 'cancel';
@@ -1126,7 +1229,7 @@ function App() {
       <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals}/>` :
-          view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onExport=${exportMeals} onImport=${importMeals}/>` :
+          view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
                                 html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 
