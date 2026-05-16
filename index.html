@@ -147,6 +147,9 @@ const html = window.htm.bind(h);
 
 /* ── Constants ─────────────────────────────────────────── */
 const MEALS_KEY   = 'mt_meals_v1';
+const MEALS_BACKUP_KEY = 'mt_meals_backup_v1';
+const MEALS_SNAP_KEY   = 'mt_meals_snapshots_v1';
+const DELETED_MEALS_KEY = 'mt_deleted_meals_v1';
 const SETT_KEY    = 'mt_settings_v1';
 const APP_VERSION = window.APP_VERSION || '0.1.1';
 const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
@@ -154,17 +157,111 @@ const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
 /* ── Storage ────────────────────────────────────────────── */
 // Meals and settings are local-first. Nothing here leaves the device unless
 // the user calls an AI provider or exports/imports a backup file.
-const loadMeals    = () => { try { return JSON.parse(localStorage.getItem(MEALS_KEY) || '[]'); } catch { return []; } };
-const saveMeals    = m  => { try { localStorage.setItem(MEALS_KEY, JSON.stringify(m)); } catch {} };
+const parseStoredJson = (key, fallback) => {
+  try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
+  catch { return fallback; }
+};
+const mealKey = meal => String(meal?.id ?? `${meal?.date || ''}-${meal?.timestamp || ''}-${meal?.mealName || ''}`);
+const mealListFrom = value => Array.isArray(value) ? value : Array.isArray(value?.meals) ? value.meals : [];
+const deletedMealKeys = () => new Set(parseStoredJson(DELETED_MEALS_KEY, []));
+const rememberDeletedMeal = meal => {
+  // Tombstones prevent recovery snapshots from bringing back intentional deletes.
+  const deleted = deletedMealKeys();
+  deleted.add(mealKey(meal));
+  try { localStorage.setItem(DELETED_MEALS_KEY, JSON.stringify([...deleted].slice(-500))); } catch {}
+};
+const clearDeletedMeals = () => {
+  try { localStorage.setItem(DELETED_MEALS_KEY, '[]'); } catch {}
+};
+const slimMeal = meal => {
+  // Backup copies intentionally drop image data so they stay tiny and reliable.
+  const { imageData, imageType, ...rest } = meal || {};
+  return { ...rest, imageData: null, imageType: null };
+};
+const mergeMealLists = (...lists) => {
+  // Prefer the first copy of each meal, so primary storage keeps its images.
+  const byId = new Map();
+  const deleted = deletedMealKeys();
+  lists.flatMap(mealListFrom).forEach(meal => {
+    const key = mealKey(meal);
+    if (meal && !deleted.has(key) && !byId.has(key)) byId.set(key, meal);
+  });
+  return [...byId.values()].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+};
+const loadMealBackup = () => {
+  const backup = mealListFrom(parseStoredJson(MEALS_BACKUP_KEY, { meals: [] }));
+  const snapshots = parseStoredJson(MEALS_SNAP_KEY, []);
+  return mergeMealLists(backup, ...snapshots.map(s => mealListFrom(s)));
+};
+const saveMealBackup = meals => {
+  // A latest backup plus a few snapshots gives us recovery points after bad writes.
+  const slim = meals.map(slimMeal);
+  const now = new Date().toISOString();
+  try {
+    localStorage.setItem(MEALS_BACKUP_KEY, JSON.stringify({ updatedAt: now, meals: slim }));
+    const previous = parseStoredJson(MEALS_SNAP_KEY, []);
+    const snapshots = [{ updatedAt: now, meals: slim }, ...previous].slice(0, 5);
+    localStorage.setItem(MEALS_SNAP_KEY, JSON.stringify(snapshots));
+  } catch {}
+};
+const loadMeals    = () => {
+  // Merge the main store with image-free backups so history survives if primary
+  // storage is corrupt, missing, or was overwritten with fewer meals.
+  const primary = mealListFrom(parseStoredJson(MEALS_KEY, []));
+  return mergeMealLists(primary, loadMealBackup());
+};
+const saveMeals    = m  => {
+  // Return a result instead of swallowing write failures. Mobile localStorage can
+  // fill quickly because meals may include image previews.
+  saveMealBackup(m);
+  try {
+    localStorage.setItem(MEALS_KEY, JSON.stringify(m));
+    saveMealBackup(m);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error };
+  }
+};
 const loadSettings = () => { try { return JSON.parse(localStorage.getItem(SETT_KEY)  || '{}'); } catch { return {}; } };
 const saveSettings = s  => { try { localStorage.setItem(SETT_KEY,  JSON.stringify(s)); } catch {} };
 
 /* ── Utils ──────────────────────────────────────────────── */
-const todayStr    = () => new Date().toISOString().split('T')[0];
+const dateStr = (date = new Date()) => {
+  // Use local calendar dates, not UTC ISO dates. UTC can put late-night meals
+  // under the wrong day for users outside GMT.
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+const todayStr    = () => dateStr();
 const fmtTime     = ts => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmtDate     = ds => new Date(ds + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 const sum         = (arr, k) => arr.reduce((a, m) => a + (parseFloat(m[k]) || 0), 0);
-const fileToB64   = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+const blobToB64   = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+const fileToImage = file => new Promise((res, rej) => {
+  // Decode with an object URL so large phone photos can be resized before storage.
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => { URL.revokeObjectURL(url); res(img); };
+  img.onerror = error => { URL.revokeObjectURL(url); rej(error); };
+  img.src = url;
+});
+const imageToMealPayload = async file => {
+  // Store/send a compressed preview instead of the original camera file. This
+  // keeps localStorage from silently hitting browser quota after a few meals.
+  const img = await fileToImage(file);
+  const maxSide = 1280;
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  const type = 'image/jpeg';
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, type, 0.72));
+  if (!blob) throw new Error('Could not process image.');
+  return { b64: await blobToB64(blob), type };
+};
 const asPositiveNumber = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -414,8 +511,13 @@ function AddView({ settings, meal, onSave, onCancel }) {
   const pick = async e => {
     // Choosing a new photo invalidates the current analysis until re-run.
     const f = e.target.files?.[0]; if (!f) return;
-    setAnalysis(null); setStatus('idle');
-    setImg({ url: URL.createObjectURL(f), b64: await fileToB64(f), type: f.type });
+    setAnalysis(null); setStatus('idle'); setErr('');
+    try {
+      const processed = await imageToMealPayload(f);
+      setImg({ url: `data:${processed.type};base64,${processed.b64}`, ...processed });
+    } catch (error) {
+      setErr(`Image failed: ${error.message || 'Could not process image.'}`);
+    }
   };
 
   const analyze = async () => {
@@ -917,6 +1019,7 @@ function App() {
   const [view,    setView]     = useState('today');
   const [editingMeal, setEditingMeal] = useState(null);
   const [editReturnView, setEditReturnView] = useState('today');
+  const [storageErr, setStorageErr] = useState('');
 
   useEffect(() => {
     // Keep app chrome and browser theme color in sync with saved settings.
@@ -931,20 +1034,36 @@ function App() {
     };
   }, [settings.theme]);
 
+  const persistMeals = nextMeals => {
+    // Do not update UI state unless persistence succeeds; otherwise a reload
+    // would make the just-entered meal seem to disappear.
+    const result = saveMeals(nextMeals);
+    if (!result.ok) {
+      setStorageErr('Meal was not saved. Storage is full; export a backup or delete older meals/photos.');
+      return false;
+    }
+    setStorageErr('');
+    setMeals(nextMeals);
+    return true;
+  };
+
   const addMeal = meal => {
     // New meals are prepended so the latest log appears first everywhere.
-    const u = [meal, ...meals]; setMeals(u); saveMeals(u); setView('today');
+    const u = [meal, ...meals];
+    if (persistMeals(u)) setView('today');
   };
   const updateMeal = meal => {
     // Editing preserves the meal id and returns to the view that launched editing.
     const u = meals.map(m => m.id === meal.id ? meal : m);
-    setMeals(u); saveMeals(u); setEditingMeal(null); setView(editReturnView);
+    if (persistMeals(u)) { setEditingMeal(null); setView(editReturnView); }
   };
   const saveMeal = meal => editingMeal ? updateMeal(meal) : addMeal(meal);
   const editMeal = meal => { setEditingMeal(meal); setEditReturnView(view); setView('add'); };
   const deleteMeal = id => {
     // Deletion is immediate after the card-level confirmation.
-    const u = meals.filter(m => m.id !== id); setMeals(u); saveMeals(u);
+    const deletedMeal = meals.find(m => m.id === id) || { id };
+    const u = meals.filter(m => m.id !== id);
+    if (persistMeals(u)) rememberDeletedMeal(deletedMeal);
   };
   const updateSettings = s => {
     // Provider settings are sanitized so stale manual selections cannot break Analyze.
@@ -977,9 +1096,8 @@ function App() {
     const importedCount = importedMeals.length;
     const mode = prompt(`Import ${importedCount} meal${importedCount === 1 ? '' : 's'}.\n\nType replace or integrate.`, 'integrate')?.trim().toLowerCase();
     if (mode === 'replace') {
-      setMeals(importedMeals);
-      saveMeals(importedMeals);
-      return 'replace';
+      clearDeletedMeals();
+      return persistMeals(importedMeals) ? 'replace' : 'cancel';
     }
     if (mode !== 'integrate') return 'cancel';
     const byId = new Map(meals.map(meal => [String(meal.id), meal]));
@@ -988,9 +1106,7 @@ function App() {
       byId.set(String(id), { ...meal, id });
     });
     const merged = [...byId.values()].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
-    setMeals(merged);
-    saveMeals(merged);
-    return 'merge';
+    return persistMeals(merged) ? 'merge' : 'cancel';
   };
 
   const NAV = [
@@ -1003,6 +1119,10 @@ function App() {
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg);padding-bottom:${view !== 'add' && view !== 'settings' ? 'calc(var(--tab-h) + var(--sab))' : '0'}">
+      ${storageErr ? html`
+        <div style="position:fixed;left:12px;right:12px;top:calc(var(--sat) + 10px);z-index:50;background:var(--danger);color:#fff;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.4;box-shadow:0 14px 34px rgba(0,0,0,.3)">
+          ${storageErr}
+        </div>` : null}
       <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals}/>` :
