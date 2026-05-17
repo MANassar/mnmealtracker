@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=auto, user-scalable=no">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -28,8 +28,11 @@
       --danger:  #d46a5a;
       --oai:     #74aa9c;
       --nav-bg:  rgba(12,26,16,.97);
-      --sat: env(safe-area-inset-top, 0px);
-      --sab: env(safe-area-inset-bottom, 0px);
+      /* Safe-area insets are disabled while viewport-fit is auto. */
+      /* --sat: env(safe-area-inset-top, 0px); */
+      /* --sab: env(safe-area-inset-bottom, 0px); */
+      --sat: 0px;
+      --sab: 0px;
       --tab-h: 64px;
       color-scheme: dark;
     }
