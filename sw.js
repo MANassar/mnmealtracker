@@ -1,5 +1,5 @@
 // Bump this with app releases so installed PWAs refresh their cached shell.
-const CACHE_NAME = 'meal-tracker-shell-v0.1.31';
+const CACHE_NAME = 'meal-tracker-shell-v0.1.33';
 const APP_SHELL = [
   './',
   './index.html',

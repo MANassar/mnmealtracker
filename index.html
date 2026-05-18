@@ -662,7 +662,7 @@ function AddView({ settings, meal, onSave, onCancel }) {
           </div>` : null}
 
         <!-- Meal date editor -->
-        ${isEditing ? html`
+        ${status === 'review' && analysis ? html`
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
             <label style="display:block">
               <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Meal Date</div>
