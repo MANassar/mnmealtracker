@@ -664,10 +664,10 @@ function AddView({ settings, meal, onSave, onCancel }) {
         <!-- Meal date editor -->
         ${status === 'review' && analysis ? html`
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
-            <label style="display:block">
+            <label style="display:block;min-width:0;max-width:100%;overflow:hidden">
               <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Meal Date</div>
               <input type="date" value=${mealDate} onInput=${e => setMealDate(e.target.value)}
-                style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:13px 12px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box"/>
+                style="display:block;width:100%;max-width:100%;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:13px 10px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;appearance:none;-webkit-appearance:none"/>
             </label>
           </div>` : null}
       </div>
