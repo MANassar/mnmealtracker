@@ -333,6 +333,14 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note"}
 Calories in kcal. Macros in grams. Do not underestimate portions.`;
 
+const OPTIMIZE_PROMPT = (analysis, desc) =>
+`You are a clinical nutritionist. Create a lower-calorie version of this meal while keeping it recognizable and satisfying.
+Original user context: "${desc || 'No extra context provided.'}"
+Original analysis: ${JSON.stringify(analysis)}
+Return ONLY a raw JSON object — no markdown, no explanation:
+{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":["specific change 1","specific change 2"],"calorieSavings":100}
+Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Do not suggest unsafe restriction.`;
+
 async function callAnthropic(img, desc, key) {
   // Anthropic manual mode uses the user's own key directly from the browser.
   const content = [
@@ -350,6 +358,26 @@ async function callAnthropic(img, desc, key) {
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514', max_tokens: 1000,
       messages: [{ role: 'user', content }],
+    }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+  return (d.content || []).map(b => b.text || '').join('');
+}
+
+async function callAnthropicOptimization(analysis, desc, key) {
+  // Manual Anthropic optimization is text-only because it refines the parsed meal.
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514', max_tokens: 1000,
+      messages: [{ role: 'user', content: [{ type: 'text', text: OPTIMIZE_PROMPT(analysis, desc) }] }],
     }),
   });
   const d = await res.json();
@@ -382,6 +410,33 @@ async function callOpenAI(img, desc, key) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ img, desc }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d.text || '';
+}
+
+async function callOpenAIOptimization(analysis, desc, key) {
+  if (key) {
+    // Manual OpenAI optimization uses the user's own key and never touches server mode.
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'gpt-4o', max_tokens: 1000,
+        messages: [{ role: 'user', content: [{ type: 'text', text: OPTIMIZE_PROMPT(analysis, desc) }] }],
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+    return d.choices?.[0]?.message?.content || '';
+  }
+
+  // Server optimization keeps the owner OpenAI key inside the Netlify function.
+  const res = await fetch('/.netlify/functions/analyze-meal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'optimize', analysis, desc }),
   });
   const d = await res.json();
   if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
@@ -539,6 +594,8 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   const [status,   setStatus]   = useState(meal ? 'review' : 'idle');
   const [analysis, setAnalysis] = useState(initialAnalysis);
   const [editCal,  setEditCal]  = useState(meal ? String(Math.round(meal.calories)) : '');
+  const [optStatus, setOptStatus] = useState('idle');
+  const [optimization, setOptimization] = useState(null);
   const [err,      setErr]      = useState('');
   const fileRef = useRef();
   const pc = providerColor(activeProvider);
@@ -561,7 +618,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   const pick = async e => {
     // Choosing a new photo invalidates the current analysis until re-run.
     const f = e.target.files?.[0]; if (!f) return;
-    setAnalysis(null); setStatus('idle'); setErr('');
+    setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); setErr('');
     try {
       const processed = await imageToMealPayload(f);
       setImg({ url: `data:${processed.type};base64,${processed.b64}`, ...processed });
@@ -591,28 +648,50 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
       confidence: item.confidence || 'medium',
     });
     setEditCal(String(Math.round(item.calories)));
+    setOptimization(null);
+    setOptStatus('idle');
     setErr('');
     setStatus('review');
   };
+
+  const parseAiJson = raw => JSON.parse(raw.replace(/```json|```/gi, '').trim());
 
   const analyze = async () => {
     // Date edits are intentionally independent; only this button calls AI again.
     const trimmedDesc = desc.trim();
     if (!img && !trimmedDesc) { setErr('Please add a photo, a description, or both.'); return; }
     const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
-    setStatus('analyzing'); setErr('');
+    setStatus('analyzing'); setOptimization(null); setOptStatus('idle'); setErr('');
     try {
       const raw = activeProvider === 'anthropic'
         ? await callAnthropic(img, trimmedDesc, key)
         : await callOpenAI(img, trimmedDesc, key);
-      const parsed = JSON.parse(raw.replace(/```json|```/gi, '').trim());
+      const parsed = parseAiJson(raw);
       setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
     } catch (e) { setErr(`Analysis failed: ${e.message}`); setStatus('error'); }
   };
 
-  const log = () => {
-    // Saving reuses the current analysis. If only the date changed, no AI call runs.
+  const optimizeCalories = async () => {
+    // Optimization is a second, optional AI call that starts from the reviewed analysis.
     if (!analysis) return;
+    const reviewedAnalysis = { ...analysis, calories: parseInt(editCal) || analysis.calories };
+    const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
+    setOptStatus('optimizing'); setOptimization(null); setErr('');
+    try {
+      const raw = activeProvider === 'anthropic'
+        ? await callAnthropicOptimization(reviewedAnalysis, desc.trim(), key)
+        : await callOpenAIOptimization(reviewedAnalysis, desc.trim(), key);
+      setOptimization(parseAiJson(raw));
+      setOptStatus('review');
+    } catch (e) {
+      setErr(`Optimization failed: ${e.message}`);
+      setOptStatus('idle');
+    }
+  };
+
+  const log = (sourceAnalysis = analysis, calorieOverride = editCal) => {
+    // Saving reuses the current analysis. If only the date changed, no AI call runs.
+    if (!sourceAnalysis) return;
     onSave({
       id: meal?.id || Date.now(),
       date: mealDate || meal?.date || todayStr(),
@@ -620,13 +699,13 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
       updatedAt: isEditing ? new Date().toISOString() : undefined,
       description: desc.trim(), provider: activeProvider,
       imageData: img?.b64 || null, imageType: img?.type || null,
-      mealName:    analysis.mealName,
-      calories:    parseInt(editCal) || analysis.calories,
-      protein:     analysis.protein,  carbs:  analysis.carbs,
-      fat:         analysis.fat,      fiber:  analysis.fiber || 0,
-      ingredients: analysis.ingredients  || [],
-      portionNote: analysis.portionNote  || '',
-      confidence:  analysis.confidence   || 'medium',
+      mealName:    sourceAnalysis.mealName,
+      calories:    parseInt(calorieOverride) || sourceAnalysis.calories,
+      protein:     sourceAnalysis.protein,  carbs:  sourceAnalysis.carbs,
+      fat:         sourceAnalysis.fat,      fiber:  sourceAnalysis.fiber || 0,
+      ingredients: sourceAnalysis.ingredients  || [],
+      portionNote: sourceAnalysis.portionNote  || '',
+      confidence:  sourceAnalysis.confidence   || 'medium',
     });
   };
 
@@ -655,7 +734,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
           ${img ? html`
             <div style="position:relative">
               <img src=${img.url} style="width:100%;max-height:240px;object-fit:cover;display:block"/>
-              <button onClick=${e => { e.stopPropagation(); setImg(null); setAnalysis(null); setStatus('idle'); fileRef.current.value = ''; }}
+              <button onClick=${e => { e.stopPropagation(); setImg(null); setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); fileRef.current.value = ''; }}
                 style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);border:none;color:var(--text);border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center">×</button>
             </div>` : html`
             <div style="text-align:center;color:var(--muted);padding:20px">
@@ -716,6 +795,50 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
               </div>` : null}
           </div>` : null}
 
+        <!-- Calorie optimization -->
+        ${!isEditing && status === 'review' && analysis ? html`
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:${optimization ? '12px' : '0'}">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Calorie Optimization</div>
+                <div style="font-size:13px;color:var(--text);line-height:1.35">Ask AI for a lower-calorie version before logging.</div>
+              </div>
+              <button onClick=${optimizeCalories} disabled=${optStatus === 'optimizing'}
+                style="flex:0 0 auto;background:${optStatus === 'optimizing' ? 'var(--muted)' : 'var(--surface)'};border:1px solid ${pc};color:${optStatus === 'optimizing' ? 'var(--surface)' : pc};border-radius:10px;padding:10px 12px;font-size:12px;font-weight:700;cursor:${optStatus === 'optimizing' ? 'not-allowed' : 'pointer'}">
+                ${optStatus === 'optimizing' ? 'Optimizing…' : optimization ? 'Try Again' : 'Optimize'}
+              </button>
+            </div>
+            ${optimization ? html`
+              <div style="background:var(--surface);border:1px solid rgba(${activeProvider === 'anthropic' ? '201,168,76' : '116,170,156'},.18);border-radius:12px;padding:12px">
+                <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px">
+                  <div style="flex:1;min-width:0">
+                    <div style="font-family:'Playfair Display',serif;font-size:17px;color:var(--text);line-height:1.2">${optimization.mealName || 'Optimized Meal'}</div>
+                    ${optimization.calorieSavings ? html`
+                      <div style="font-size:11px;color:var(--mint);font-family:'DM Mono',monospace;margin-top:4px">-${Math.round(optimization.calorieSavings)} kcal estimated</div>` : null}
+                  </div>
+                  <div style="font-size:20px;color:${pc};font-family:'DM Mono',monospace;font-weight:700;white-space:nowrap">${Math.round(optimization.calories || 0)} kcal</div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
+                  ${[['P', optimization.protein], ['C', optimization.carbs], ['F', optimization.fat], ['Fi', optimization.fiber || 0]].map(([l, v]) => html`
+                    <div style="background:var(--card);border-radius:8px;padding:7px 4px;text-align:center">
+                      <div style="font-size:13px;font-weight:700;color:var(--text);font-family:'DM Mono',monospace">${Number(v || 0).toFixed(0)}</div>
+                      <div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${l}</div>
+                    </div>`)}
+                </div>
+                ${(optimization.suggestions || []).length ? html`
+                  <div style="display:grid;gap:6px;margin-bottom:10px">
+                    ${(optimization.suggestions || []).slice(0, 4).map(suggestion => html`
+                      <div style="font-size:12px;color:var(--muted);line-height:1.35;background:var(--card);border-radius:8px;padding:8px">${suggestion}</div>`)}
+                  </div>` : null}
+                ${optimization.portionNote ? html`
+                  <div style="font-size:11px;color:var(--muted);font-style:italic;line-height:1.35;margin-bottom:10px">${optimization.portionNote}</div>` : null}
+                <button onClick=${() => log(optimization, optimization.calories)}
+                  style="width:100%;padding:13px;background:${pc};border:none;border-radius:10px;font-size:14px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:46px">
+                  Accept & Log ✓
+                </button>
+              </div>` : null}
+          </div>` : null}
+
         <!-- Meal date editor -->
         ${status === 'review' && analysis ? html`
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
@@ -739,7 +862,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
               style="flex:1;padding:16px;background:none;border:1px solid var(--muted);border-radius:14px;font-size:14px;color:var(--muted);cursor:pointer;min-height:54px">
               Re-analyze
             </button>
-            <button onClick=${log}
+            <button onClick=${() => log()}
               style="flex:2;padding:16px;background:${pc};border:none;border-radius:14px;font-size:15px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:54px">
               ${isEditing ? 'Save Meal ✓' : 'Log Meal ✓'}
             </button>

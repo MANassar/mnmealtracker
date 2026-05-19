@@ -48,6 +48,14 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note"}
 Calories in kcal. Macros in grams. Do not underestimate portions.`;
 
+const optimizePrompt = (analysis, desc) =>
+`You are a clinical nutritionist. Create a lower-calorie version of this meal while keeping it recognizable and satisfying.
+Original user context: "${desc || 'No extra context provided.'}"
+Original analysis: ${JSON.stringify(analysis)}
+Return ONLY a raw JSON object — no markdown, no explanation:
+{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":["specific change 1","specific change 2"],"calorieSavings":100}
+Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Do not suggest unsafe restriction.`;
+
 exports.handler = async event => {
   // Browsers send OPTIONS before custom cross-origin POST requests.
   if (event.httpMethod === 'OPTIONS') return json(event, 204, {});
@@ -72,11 +80,15 @@ exports.handler = async event => {
     return json(event, 400, { error: 'Invalid JSON body.' });
   }
 
+  const mode = payload.mode === 'optimize' ? 'optimize' : 'analyze';
   const img = payload.img || null;
   const desc = String(payload.desc || '').trim();
+  const analysis = payload.analysis && typeof payload.analysis === 'object' ? payload.analysis : null;
   // Cheap validation happens before any paid OpenAI call.
-  if (!img && !desc) return json(event, 400, { error: 'Please provide an image, a description, or both.' });
+  if (mode === 'analyze' && !img && !desc) return json(event, 400, { error: 'Please provide an image, a description, or both.' });
+  if (mode === 'optimize' && !analysis) return json(event, 400, { error: 'Please provide an analysis to optimize.' });
   if (desc.length > 2000) return json(event, 413, { error: 'Description is too long.' });
+  if (analysis && JSON.stringify(analysis).length > 5000) return json(event, 413, { error: 'Analysis is too large.' });
   if (img?.b64 && img.b64.length > 7_000_000) return json(event, 413, { error: 'Image is too large.' });
   if (img?.type && !['image/jpeg', 'image/png', 'image/webp'].includes(img.type)) {
     return json(event, 415, { error: 'Unsupported image type.' });
@@ -84,10 +96,10 @@ exports.handler = async event => {
 
   const content = [
     // Image content is optional; descriptions alone are valid.
-    ...(img?.b64 && img?.type
+    ...(mode === 'analyze' && img?.b64 && img?.type
       ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }]
       : []),
-    { type: 'text', text: prompt(desc) },
+    { type: 'text', text: mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
   ];
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
