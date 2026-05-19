@@ -1,5 +1,11 @@
-// Bump this with app releases so installed PWAs refresh their cached shell.
-const CACHE_NAME = 'meal-tracker-shell-v0.1.39';
+// The service worker shares the visible app version so releases only bump one file.
+if (typeof window === 'undefined') {
+  // version.js is also loaded by the browser page, so expose a window alias here.
+  globalThis.window = globalThis;
+}
+importScripts('./version.js');
+
+const CACHE_NAME = `meal-tracker-shell-v${globalThis.APP_VERSION || '0.1.1'}`;
 const APP_SHELL = [
   './',
   './index.html',
