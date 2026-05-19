@@ -418,8 +418,8 @@ applyTheme(loadSettings().theme);
 const PROMPT = desc =>
 `You are a clinical nutritionist. Analyze the food from the image, description, or both.${desc ? ` User context: "${desc}"` : ''}
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note"}
-Calories in kcal. Macros in grams. Do not underestimate portions.`;
+{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["visible component with estimated quantity","second visible component with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
+Calories in kcal. Macros in grams. Do not underestimate portions. If the user provided only an image and no description, spell out every detected meal component in ingredients, including sauces, sides, toppings, and drinks when visible.`;
 
 const OPTIMIZE_PROMPT = (analysis, desc) =>
 `You are a clinical nutritionist. Create a lower-calorie version of this meal while keeping it recognizable and satisfying.
