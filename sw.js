@@ -13,6 +13,7 @@ const APP_SHELL = [
   './preact-hooks.umd.js',
   './htm.umd.js',
   './version.js',
+  './analytics-config.js',
   './app.webmanifest',
 ];
 

@@ -121,6 +121,7 @@
 <script src="./preact-hooks.umd.js"></script>
 <script src="./htm.umd.js"></script>
 <script src="./version.js"></script>
+<script src="./analytics-config.js"></script>
 <script>
 function showBootError(error) {
   const root = document.getElementById('root');
@@ -156,6 +157,61 @@ const DELETED_MEALS_KEY = 'mt_deleted_meals_v1';
 const SETT_KEY    = 'mt_settings_v1';
 const APP_VERSION = window.APP_VERSION || '0.1.1';
 const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
+
+/* ── Analytics ─────────────────────────────────────────── */
+const analyticsConfig = window.POSTHOG_CONFIG || {};
+const safeAnalyticsProps = props => Object.fromEntries(
+  Object.entries(props || {}).filter(([, value]) =>
+    value === null || ['string', 'number', 'boolean'].includes(typeof value)
+  )
+);
+const initAnalytics = () => {
+  // PostHog is opt-in by configuration; no script loads until a key is present.
+  const apiKey = String(analyticsConfig.apiKey || '').trim();
+  if (!apiKey || window.posthog) return;
+  const apiHost = String(analyticsConfig.apiHost || 'https://us.i.posthog.com').replace(/\/$/, '');
+  const assetHost = String(analyticsConfig.assetHost || apiHost.replace('.i.posthog.com', '-assets.i.posthog.com')).replace(/\/$/, '');
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = `${assetHost}/static/array.js`;
+  script.onload = () => {
+    window.posthog?.init?.(apiKey, {
+      api_host: apiHost,
+      defaults: analyticsConfig.defaults || '2026-01-30',
+      autocapture: false,
+      capture_pageview: false,
+      disable_session_recording: analyticsConfig.sessionReplay === false,
+      mask_all_text: true,
+      mask_all_element_attributes: true,
+      person_profiles: 'identified_only',
+    });
+    trackEvent('app_loaded', { version: APP_VERSION, installed: isStandaloneApp() });
+  };
+  script.onerror = () => {};
+  document.head.appendChild(script);
+};
+const trackEvent = (name, props = {}) => {
+  // Analytics events must never include meal descriptions, ingredients, photos, or keys.
+  try { window.posthog?.capture?.(name, safeAnalyticsProps({ version: APP_VERSION, ...props })); } catch {}
+};
+const isStandaloneApp = () =>
+  window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const valueBucket = (value, size) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return 'unknown';
+  const low = Math.floor(n / size) * size;
+  return `${low}-${low + size - 1}`;
+};
+const mealAnalyticsProps = (meal, meta = {}) => ({
+  provider: meal?.provider || 'unknown',
+  used_image: Boolean(meal?.imageData),
+  used_description: Boolean(meal?.description),
+  log_date: meal?.date === todayStr() ? 'today' : 'other_day',
+  calories_bucket: valueBucket(meal?.calories, 100),
+  source: meta.source || 'analysis',
+  optimized: Boolean(meta.optimized),
+});
+initAnalytics();
 
 /* ── Storage ────────────────────────────────────────────── */
 // Meals and settings are local-first. Nothing here leaves the device unless
@@ -505,7 +561,7 @@ function MealCard({ meal, onDelete, onEdit }) {
       style="background:var(--card);border-radius:14px;overflow:hidden;border:1px solid var(--border);margin-bottom:10px;cursor:pointer">
       <div style="display:flex;align-items:stretch">
         ${meal.imageData
-          ? html`<img src="data:${meal.imageType};base64,${meal.imageData}" style="width:80px;height:80px;object-fit:cover;flex-shrink:0"/>`
+          ? html`<img class="ph-no-capture" src="data:${meal.imageType};base64,${meal.imageData}" style="width:80px;height:80px;object-fit:cover;flex-shrink:0"/>`
           : html`<div style="width:80px;height:80px;background:var(--surface);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:26px">🍽</div>`}
         <div style="flex:1;padding:10px 12px;min-width:0">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
@@ -622,8 +678,10 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     try {
       const processed = await imageToMealPayload(f);
       setImg({ url: `data:${processed.type};base64,${processed.b64}`, ...processed });
+      trackEvent('meal_photo_added', { image_type: processed.type, source: isEditing ? 'edit' : 'add' });
     } catch (error) {
       setErr(`Image failed: ${error.message || 'Could not process image.'}`);
+      trackEvent('meal_photo_failed', { source: isEditing ? 'edit' : 'add' });
     }
   };
 
@@ -652,6 +710,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     setOptStatus('idle');
     setErr('');
     setStatus('review');
+    trackEvent('previous_meal_selected');
   };
 
   const parseAiJson = raw => JSON.parse(raw.replace(/```json|```/gi, '').trim());
@@ -682,13 +741,35 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     if (!img && !trimmedDesc) { setErr('Please add a photo, a description, or both.'); return; }
     const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
     setStatus('analyzing'); setOptimization(null); setOptStatus('idle'); setErr('');
+    trackEvent('meal_analysis_started', {
+      provider: activeProvider,
+      used_image: Boolean(img),
+      used_description: Boolean(trimmedDesc),
+      source: isEditing ? 'edit' : 'add',
+    });
     try {
       const raw = activeProvider === 'anthropic'
         ? await callAnthropic(img, trimmedDesc, key)
         : await callOpenAI(img, trimmedDesc, key);
       const parsed = parseAiJson(raw);
       setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
-    } catch (e) { setErr(`Analysis failed: ${e.message}`); setStatus('error'); }
+      trackEvent('meal_analysis_succeeded', {
+        provider: activeProvider,
+        used_image: Boolean(img),
+        used_description: Boolean(trimmedDesc),
+        source: isEditing ? 'edit' : 'add',
+        calories_bucket: valueBucket(parsed.calories, 100),
+      });
+    } catch (e) {
+      setErr(`Analysis failed: ${e.message}`);
+      setStatus('error');
+      trackEvent('meal_analysis_failed', {
+        provider: activeProvider,
+        used_image: Boolean(img),
+        used_description: Boolean(trimmedDesc),
+        source: isEditing ? 'edit' : 'add',
+      });
+    }
   };
 
   const optimizeCalories = async () => {
@@ -697,19 +778,30 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     const reviewedAnalysis = { ...analysis, calories: parseInt(editCal) || analysis.calories };
     const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
     setOptStatus('optimizing'); setOptimization(null); setErr('');
+    trackEvent('meal_optimization_started', {
+      provider: activeProvider,
+      calories_bucket: valueBucket(reviewedAnalysis.calories, 100),
+    });
     try {
       const raw = activeProvider === 'anthropic'
         ? await callAnthropicOptimization(reviewedAnalysis, desc.trim(), key)
         : await callOpenAIOptimization(reviewedAnalysis, desc.trim(), key);
-      setOptimization(parseAiJson(raw));
+      const parsed = parseAiJson(raw);
+      setOptimization(parsed);
       setOptStatus('review');
+      trackEvent('meal_optimization_succeeded', {
+        provider: activeProvider,
+        original_calories_bucket: valueBucket(reviewedAnalysis.calories, 100),
+        optimized_calories_bucket: valueBucket(parsed.calories, 100),
+      });
     } catch (e) {
       setErr(`Optimization failed: ${e.message}`);
       setOptStatus('idle');
+      trackEvent('meal_optimization_failed', { provider: activeProvider });
     }
   };
 
-  const log = (sourceAnalysis = analysis, calorieOverride = editCal) => {
+  const log = (sourceAnalysis = analysis, calorieOverride = editCal, source = 'analysis') => {
     // Saving reuses the current analysis. If only the date changed, no AI call runs.
     if (!sourceAnalysis) return;
     onSave({
@@ -726,7 +818,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
       ingredients: sourceAnalysis.ingredients  || [],
       portionNote: sourceAnalysis.portionNote  || '',
       confidence:  sourceAnalysis.confidence   || 'medium',
-    });
+    }, { source, optimized: source === 'optimized' });
   };
 
   return html`
@@ -753,7 +845,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
                  ${img ? '' : 'min-height:160px;display:flex;align-items:center;justify-content:center'}">
           ${img ? html`
             <div style="position:relative">
-              <img src=${img.url} style="width:100%;max-height:240px;object-fit:cover;display:block"/>
+              <img class="ph-no-capture" src=${img.url} style="width:100%;max-height:240px;object-fit:cover;display:block"/>
               <button onClick=${e => { e.stopPropagation(); setImg(null); setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); fileRef.current.value = ''; }}
                 style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);border:none;color:var(--text);border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center">×</button>
             </div>` : html`
@@ -766,7 +858,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
         <input ref=${fileRef} type="file" accept="image/*" onChange=${pick} style="display:none"/>
 
         <!-- Description -->
-        <textarea value=${desc} onInput=${e => setDesc(e.target.value)}
+        <textarea class="ph-no-capture" value=${desc} onInput=${e => setDesc(e.target.value)}
           placeholder="Describe the meal, portions, ingredients, or restaurant…" rows="3"
           style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;resize:none;margin-bottom:12px;font-family:'DM Sans',sans-serif;box-sizing:border-box"></textarea>
 
@@ -872,7 +964,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
                   </div>` : null}
                 ${optimization.portionNote ? html`
                   <div style="font-size:11px;color:var(--muted);font-style:italic;line-height:1.35;margin-bottom:10px">${optimization.portionNote}</div>` : null}
-                <button onClick=${() => log(optimization, optimization.calories)}
+                <button onClick=${() => log(optimization, optimization.calories, 'optimized')}
                   style="width:100%;padding:13px;background:${pc};border:none;border-radius:10px;font-size:14px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:46px">
                   Accept & Log ✓
                 </button>
@@ -884,7 +976,10 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
             <label style="display:block;min-width:0;max-width:100%;overflow:hidden">
               <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Meal Date</div>
-              <input type="date" value=${mealDate} onInput=${e => setMealDate(e.target.value)}
+              <input type="date" value=${mealDate} onInput=${e => {
+                setMealDate(e.target.value);
+                trackEvent('meal_date_changed', { source: isEditing ? 'edit' : 'add', date_type: e.target.value === todayStr() ? 'today' : 'other_day' });
+              }}
                 style="display:block;width:100%;max-width:100%;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:16px;padding:13px 10px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;appearance:none;-webkit-appearance:none"/>
             </label>
           </div>` : null}
@@ -1267,7 +1362,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
             <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">Anthropic API Key</span>
             ${provider === 'anthropic' ? html`<span style="font-size:10px;color:var(--accent);font-weight:600">● Active</span>` : null}
           </div>
-          <input type="password" value=${anthropicKey} onInput=${e => setAnthropicKey(e.target.value)}
+          <input class="ph-no-capture" type="password" value=${anthropicKey} onInput=${e => setAnthropicKey(e.target.value)}
             placeholder="sk-ant-api03-…"
             style="width:100%;background:var(--card);border:1px solid ${provider === 'anthropic' ? 'rgba(201,168,76,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;margin-bottom:6px"/>
           <div style="font-size:11px;color:var(--muted);line-height:1.5">
@@ -1281,7 +1376,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
             <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em">OpenAI API Key</span>
             ${provider === 'openai' ? html`<span style="font-size:10px;color:var(--oai);font-weight:600">● Active</span>` : null}
           </div>
-          <input type="password" value=${oaiKey} onInput=${e => setOaiKey(e.target.value)}
+          <input class="ph-no-capture" type="password" value=${oaiKey} onInput=${e => setOaiKey(e.target.value)}
             placeholder="sk-proj-…"
             style="width:100%;background:var(--card);border:1px solid ${provider === 'openai' ? 'rgba(116,170,156,.4)' : 'var(--border)'};border-radius:10px;color:var(--text);font-size:16px;padding:14px;outline:none;font-family:'DM Mono',monospace;box-sizing:border-box;margin-bottom:6px"/>
           <div style="font-size:11px;color:var(--muted);line-height:1.5">
@@ -1349,6 +1444,11 @@ function App() {
     };
   }, [settings.theme]);
 
+  useEffect(() => {
+    // Track view changes manually because this single-page app has no route changes.
+    trackEvent('app_viewed', { view, editing: Boolean(editingMeal) });
+  }, [view, editingMeal]);
+
   const persistMeals = (nextMeals, options = {}) => {
     // Do not update UI state unless persistence succeeds; otherwise a reload
     // would make the just-entered meal seem to disappear.
@@ -1364,29 +1464,45 @@ function App() {
     return true;
   };
 
-  const addMeal = meal => {
+  const addMeal = (meal, meta = {}) => {
     // New meals are prepended so the latest log appears first everywhere.
     const u = [meal, ...meals];
-    if (persistMeals(u)) setView('today');
+    if (persistMeals(u)) {
+      trackEvent('meal_logged', mealAnalyticsProps(meal, meta));
+      setView('today');
+    }
   };
-  const updateMeal = meal => {
+  const updateMeal = (meal, meta = {}) => {
     // Editing preserves the meal id and returns to the view that launched editing.
     const u = meals.map(m => m.id === meal.id ? meal : m);
-    if (persistMeals(u)) { setEditingMeal(null); setView(editReturnView); }
+    if (persistMeals(u)) {
+      trackEvent('meal_updated', mealAnalyticsProps(meal, meta));
+      setEditingMeal(null);
+      setView(editReturnView);
+    }
   };
-  const saveMeal = meal => editingMeal ? updateMeal(meal) : addMeal(meal);
-  const editMeal = meal => { setEditingMeal(meal); setEditReturnView(view); setView('add'); };
+  const saveMeal = (meal, meta) => editingMeal ? updateMeal(meal, meta) : addMeal(meal, meta);
+  const editMeal = meal => {
+    trackEvent('meal_edit_started', { from_view: view });
+    setEditingMeal(meal);
+    setEditReturnView(view);
+    setView('add');
+  };
   const deleteMeal = id => {
     // Deletion is immediate after the card-level confirmation.
     const deletedMeal = meals.find(m => m.id === id) || { id };
     const u = meals.filter(m => m.id !== id);
-    if (persistMeals(u)) rememberDeletedMeal(deletedMeal);
+    if (persistMeals(u)) {
+      rememberDeletedMeal(deletedMeal);
+      trackEvent('meal_deleted', { from_view: view });
+    }
   };
   const clearMeals = () => {
     // Clear means purge all meal stores, including recovery backups and tombstones.
     purgeMealStorage();
     setStorageErr('');
     setMeals([]);
+    trackEvent('meals_cleared');
     return 'clear';
   };
   const updateSettings = s => {
@@ -1394,6 +1510,12 @@ function App() {
     const normalized = { ...s, provider: normalizeProviderSetting(s) };
     setSettings(normalized);
     saveSettings(normalized);
+    trackEvent('settings_saved', {
+      provider: normalized.provider,
+      theme: normalized.theme || 'auto',
+      has_anthropic_key: Boolean(normalized.anthropicKey?.trim()),
+      has_openai_key: Boolean(normalized.oaiKey?.trim()),
+    });
   };
   const targets = normalizeTargets(settings);
   const exportMeals = () => {
@@ -1413,12 +1535,15 @@ function App() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    trackEvent('meals_exported', { meal_count_bucket: valueBucket(meals.length, 10) });
   };
   const importMeals = (importedMeals, mode) => {
     // Import supports replace or integrate; integrate de-dupes by stable meal id.
     const importedCount = importedMeals.length;
     if (mode === 'replace') {
-      return persistMeals(importedMeals, { resetSnapshots: true }) ? 'replace' : 'cancel';
+      const ok = persistMeals(importedMeals, { resetSnapshots: true });
+      if (ok) trackEvent('meals_imported', { mode, imported_count_bucket: valueBucket(importedCount, 10) });
+      return ok ? 'replace' : 'cancel';
     }
     if (mode !== 'integrate') return 'cancel';
     const byId = new Map(meals.map(meal => [String(meal.id), meal]));
@@ -1430,7 +1555,9 @@ function App() {
       else byId.set(String(id), { ...meal, id });
     });
     const merged = [...byId.values()].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
-    return persistMeals(merged) ? 'merge' : 'cancel';
+    const ok = persistMeals(merged);
+    if (ok) trackEvent('meals_imported', { mode, imported_count_bucket: valueBucket(importedCount, 10) });
+    return ok ? 'merge' : 'cancel';
   };
 
   const NAV = [
