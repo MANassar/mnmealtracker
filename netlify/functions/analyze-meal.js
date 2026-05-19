@@ -72,6 +72,17 @@ exports.handler = async event => {
     return json(event, 403, { error: 'Origin is not allowed.' });
   }
 
+  // Token check: when MEAL_TRACKER_TOKEN is set in Netlify env vars, all requests
+  // must supply the matching value in X-Meal-Tracker-Token to prevent unauthorized use
+  // of the owner's OpenAI API key by non-app clients.
+  const expectedToken = process.env.MEAL_TRACKER_TOKEN;
+  if (expectedToken) {
+    const clientToken = event.headers['x-meal-tracker-token'] || event.headers['X-Meal-Tracker-Token'] || '';
+    if (clientToken !== expectedToken) {
+      return json(event, 401, { error: 'Unauthorized.' });
+    }
+  }
+
   let payload;
   try {
     // Parse once at the boundary so later validation works with structured data.

@@ -126,14 +126,27 @@
 function showBootError(error) {
   const root = document.getElementById('root');
   const message = error?.message || String(error || 'Unknown startup error');
-  root.innerHTML = `
-    <div style="min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);color:var(--text)">
-      <div style="max-width:360px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;line-height:1.5">
-        <div style="font-family:'Playfair Display',serif;font-size:22px;margin-bottom:8px">Meal Tracker could not load</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Close the app and open it again from Safari once. If this keeps happening, remove the home-screen icon and add it again.</div>
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--danger);word-break:break-word">${message.replace(/[<>&]/g, c => ({ '<':'&lt;', '>':'&gt;', '&':'&amp;' }[c]))}</div>
-      </div>
-    </div>`;
+
+  const outer = document.createElement('div');
+  outer.setAttribute('style', 'min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg);color:var(--text)');
+  const card = document.createElement('div');
+  card.setAttribute('style', 'max-width:360px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;line-height:1.5');
+  const title = document.createElement('div');
+  title.setAttribute('style', "font-family:'Playfair Display',serif;font-size:22px;margin-bottom:8px");
+  title.textContent = 'Meal Tracker could not load';
+  const hint = document.createElement('div');
+  hint.setAttribute('style', 'font-size:13px;color:var(--muted);margin-bottom:12px');
+  hint.textContent = 'Close the app and open it again from Safari once. If this keeps happening, remove the home-screen icon and add it again.';
+  const errMsg = document.createElement('div');
+  errMsg.setAttribute('style', "font-family:'DM Mono',monospace;font-size:11px;color:var(--danger);word-break:break-word");
+  errMsg.textContent = message;
+
+  card.appendChild(title);
+  card.appendChild(hint);
+  card.appendChild(errMsg);
+  outer.appendChild(card);
+  root.textContent = '';
+  root.appendChild(outer);
 }
 
 window.addEventListener('error', event => showBootError(event.error || event.message));
@@ -483,7 +496,7 @@ async function callOpenAI(img, desc, key) {
   // Server mode routes through Netlify so the app owner's OpenAI key stays private.
   const res = await fetch('/.netlify/functions/analyze-meal', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
     body: JSON.stringify({ img, desc }),
   });
   const d = await res.json();
@@ -510,7 +523,7 @@ async function callOpenAIOptimization(analysis, desc, key) {
   // Server optimization keeps the owner OpenAI key inside the Netlify function.
   const res = await fetch('/.netlify/functions/analyze-meal', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
     body: JSON.stringify({ mode: 'optimize', analysis, desc }),
   });
   const d = await res.json();
@@ -1412,6 +1425,12 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
             Optional. Leave empty to use the Server provider.
           </div>
         </div>
+
+        <!-- Key storage notice -->
+        ${(anthropicKey.trim() || oaiKey.trim()) ? html`
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:20px">
+          API keys are stored in your browser's local storage on this device only and are never sent to any server other than the respective AI provider.
+        </div>` : null}
 
         <!-- Save -->
         <button onClick=${save}
