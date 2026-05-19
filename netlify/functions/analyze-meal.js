@@ -53,8 +53,8 @@ const optimizePrompt = (analysis, desc) =>
 Original user context: "${desc || 'No extra context provided.'}"
 Original analysis: ${JSON.stringify(analysis)}
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":["specific change 1","specific change 2"],"calorieSavings":100}
-Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Do not suggest unsafe restriction.`;
+{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0},{"text":"use 120g grilled chicken breast instead of 120g fried chicken thigh","caloriesDelta":-80,"proteinDelta":6.0,"carbsDelta":0.0,"fatDelta":-9.0,"fiberDelta":0.0}],"calorieSavings":100}
+Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Each suggestion must be concrete: name the original item, the replacement or reduction, and the specific quantity. Each suggestion must include estimated calorie and macro deltas versus the original item. Do not suggest unsafe restriction.`;
 
 exports.handler = async event => {
   // Browsers send OPTIONS before custom cross-origin POST requests.

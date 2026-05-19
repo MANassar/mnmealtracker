@@ -338,8 +338,8 @@ const OPTIMIZE_PROMPT = (analysis, desc) =>
 Original user context: "${desc || 'No extra context provided.'}"
 Original analysis: ${JSON.stringify(analysis)}
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":["specific change 1","specific change 2"],"calorieSavings":100}
-Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Do not suggest unsafe restriction.`;
+{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0},{"text":"use 120g grilled chicken breast instead of 120g fried chicken thigh","caloriesDelta":-80,"proteinDelta":6.0,"carbsDelta":0.0,"fatDelta":-9.0,"fiberDelta":0.0}],"calorieSavings":100}
+Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Each suggestion must be concrete: name the original item, the replacement or reduction, and the specific quantity. Each suggestion must include estimated calorie and macro deltas versus the original item. Do not suggest unsafe restriction.`;
 
 async function callAnthropic(img, desc, key) {
   // Anthropic manual mode uses the user's own key directly from the browser.
@@ -655,6 +655,26 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   };
 
   const parseAiJson = raw => JSON.parse(raw.replace(/```json|```/gi, '').trim());
+  const formatDelta = (value, unit = 'g') => {
+    // Deltas are shown with signs so reductions and increases are easy to scan.
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const rounded = unit === 'kcal' ? Math.round(n) : n.toFixed(1);
+    return `${n > 0 ? '+' : ''}${rounded}${unit}`;
+  };
+  const macroImpact = (next, base, key, unit = 'g') => formatDelta(Number(next?.[key] || 0) - Number(base?.[key] || 0), unit);
+  const suggestionText = suggestion => typeof suggestion === 'string' ? suggestion : suggestion?.text || suggestion?.suggestion || '';
+  const suggestionImpact = suggestion => {
+    // New AI responses provide per-suggestion macro deltas; old string suggestions still render.
+    if (!suggestion || typeof suggestion === 'string') return [];
+    return [
+      ['Cal', suggestion.caloriesDelta, 'kcal'],
+      ['P', suggestion.proteinDelta, 'g'],
+      ['C', suggestion.carbsDelta, 'g'],
+      ['F', suggestion.fatDelta, 'g'],
+      ['Fi', suggestion.fiberDelta, 'g'],
+    ].map(([label, value, unit]) => [label, formatDelta(value, unit)]).filter(([, value]) => value);
+  };
 
   const analyze = async () => {
     // Date edits are intentionally independent; only this button calls AI again.
@@ -825,10 +845,30 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
                       <div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${l}</div>
                     </div>`)}
                 </div>
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">
+                  ${[
+                    ['Cal', macroImpact(optimization, analysis, 'calories', 'kcal')],
+                    ['P', macroImpact(optimization, analysis, 'protein')],
+                    ['C', macroImpact(optimization, analysis, 'carbs')],
+                    ['F', macroImpact(optimization, analysis, 'fat')],
+                    ['Fi', macroImpact(optimization, analysis, 'fiber')],
+                  ].map(([label, delta]) => html`
+                    <div style="background:var(--card);border-radius:8px;padding:7px 3px;text-align:center">
+                      <div style="font-size:11px;font-weight:700;color:${String(delta || '').startsWith('-') ? 'var(--mint)' : 'var(--muted)'};font-family:'DM Mono',monospace;white-space:nowrap">${delta}</div>
+                      <div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${label} Δ</div>
+                    </div>`)}
+                </div>
                 ${(optimization.suggestions || []).length ? html`
                   <div style="display:grid;gap:6px;margin-bottom:10px">
                     ${(optimization.suggestions || []).slice(0, 4).map(suggestion => html`
-                      <div style="font-size:12px;color:var(--muted);line-height:1.35;background:var(--card);border-radius:8px;padding:8px">${suggestion}</div>`)}
+                      <div style="background:var(--card);border-radius:8px;padding:8px">
+                        <div style="font-size:12px;color:var(--muted);line-height:1.35">${suggestionText(suggestion)}</div>
+                        ${suggestionImpact(suggestion).length ? html`
+                          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">
+                            ${suggestionImpact(suggestion).map(([label, delta]) => html`
+                              <span style="font-size:9px;color:${String(delta).startsWith('-') ? 'var(--mint)' : 'var(--muted)'};font-family:'DM Mono',monospace;background:var(--surface);border-radius:6px;padding:3px 5px;white-space:nowrap">${label} ${delta}</span>`)}
+                          </div>` : null}
+                      </div>`)}
                   </div>` : null}
                 ${optimization.portionNote ? html`
                   <div style="font-size:11px;color:var(--muted);font-style:italic;line-height:1.35;margin-bottom:10px">${optimization.portionNote}</div>` : null}
