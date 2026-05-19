@@ -255,6 +255,27 @@ const slimMeal = meal => {
   const { imageData, imageType, ...rest } = meal || {};
   return { ...rest, imageData: null, imageType: null };
 };
+const stripOldestMealPhotosUntilSaved = meals => {
+  // If image-heavy primary storage is full, remove older photos one at a time
+  // so recent meal photos survive whenever the browser quota allows it.
+  const trimmed = [...meals];
+  const photoIndexesOldestFirst = trimmed
+    .map((meal, index) => ({ index, time: new Date(meal?.timestamp || meal?.date || 0).getTime() || 0 }))
+    .filter(({ index }) => Boolean(trimmed[index]?.imageData))
+    .sort((a, b) => a.time - b.time)
+    .map(({ index }) => index);
+
+  for (let removedPhotos = 1; removedPhotos <= photoIndexesOldestFirst.length; removedPhotos += 1) {
+    const index = photoIndexesOldestFirst[removedPhotos - 1];
+    trimmed[index] = slimMeal(trimmed[index]);
+    try {
+      localStorage.setItem(MEALS_KEY, JSON.stringify(trimmed));
+      return { ok: true, meals: trimmed, removedPhotos };
+    } catch {}
+  }
+
+  return { ok: false, meals: trimmed, removedPhotos: photoIndexesOldestFirst.length };
+};
 const mergeMealLists = (...lists) => {
   // Prefer the first copy of each meal, so primary storage keeps its images.
   const byId = new Map();
@@ -303,14 +324,12 @@ const saveMeals    = (m, options = {}) => {
     saveMealBackup(m, { resetSnapshots });
     return { ok: true, meals: m, slimmed: false };
   } catch (error) {
-    const slim = m.map(slimMeal);
-    try {
-      localStorage.setItem(MEALS_KEY, JSON.stringify(slim));
-      saveMealBackup(slim, { resetSnapshots });
-      return { ok: true, meals: slim, slimmed: true, error };
-    } catch {
-      return { ok: false, error };
+    const trimmed = stripOldestMealPhotosUntilSaved(m);
+    if (trimmed.ok) {
+      saveMealBackup(trimmed.meals, { resetSnapshots });
+      return { ok: true, meals: trimmed.meals, slimmed: true, removedPhotos: trimmed.removedPhotos, error };
     }
+    return { ok: false, error };
   }
 };
 const loadSettings = () => { try { return JSON.parse(localStorage.getItem(SETT_KEY)  || '{}'); } catch { return {}; } };
@@ -655,6 +674,14 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   const [err,      setErr]      = useState('');
   const fileRef = useRef();
   const pc = providerColor(activeProvider);
+
+  useEffect(() => {
+    // Transient Add Meal errors should clear themselves, while still being dismissible.
+    if (!err) return undefined;
+    const t = setTimeout(() => setErr(''), 8000);
+    return () => clearTimeout(t);
+  }, [err]);
+
   const previousMeals = (() => {
     // Show recent unique meals so common repeats can be logged without another AI call.
     const bySignature = new Map();
@@ -879,8 +906,10 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
 
         <!-- Error -->
         ${err ? html`
-          <div style="background:rgba(212,106,90,.12);border:1px solid var(--danger);border-radius:10px;padding:12px;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.4">
-            ${err}
+          <div style="background:rgba(212,106,90,.12);border:1px solid var(--danger);border-radius:10px;padding:12px;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.4;display:flex;gap:10px;align-items:flex-start">
+            <div style="flex:1;min-width:0">${err}</div>
+            <button onClick=${() => setErr('')}
+              style="background:none;border:none;color:var(--danger);font-size:18px;line-height:1;cursor:pointer;min-width:28px;min-height:28px;display:flex;align-items:center;justify-content:center;margin-top:-4px">×</button>
           </div>` : null}
 
         <!-- Analysis result -->
@@ -1449,6 +1478,13 @@ function App() {
     trackEvent('app_viewed', { view, editing: Boolean(editingMeal) });
   }, [view, editingMeal]);
 
+  useEffect(() => {
+    // Storage toasts are important but should not stay pinned over the UI forever.
+    if (!storageErr) return undefined;
+    const t = setTimeout(() => setStorageErr(''), 8000);
+    return () => clearTimeout(t);
+  }, [storageErr]);
+
   const persistMeals = (nextMeals, options = {}) => {
     // Do not update UI state unless persistence succeeds; otherwise a reload
     // would make the just-entered meal seem to disappear.
@@ -1458,7 +1494,7 @@ function App() {
       return false;
     }
     setStorageErr(result.slimmed
-      ? 'Saved without meal photos because browser storage was full.'
+      ? `Saved, but removed ${result.removedPhotos || 'some'} older meal photo${result.removedPhotos === 1 ? '' : 's'} because browser storage was full.`
       : '');
     setMeals(result.meals);
     return true;
@@ -1571,8 +1607,10 @@ function App() {
   return html`
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg);padding-bottom:${view !== 'add' && view !== 'settings' ? 'calc(var(--tab-h) + var(--sab))' : '0'}">
       ${storageErr ? html`
-        <div style="position:fixed;left:12px;right:12px;top:calc(var(--sat) + 10px);z-index:50;background:var(--danger);color:#fff;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.4;box-shadow:0 14px 34px rgba(0,0,0,.3)">
-          ${storageErr}
+        <div style="position:fixed;left:12px;right:12px;top:calc(var(--sat) + 10px);z-index:50;background:var(--danger);color:#fff;border-radius:12px;padding:12px 12px 12px 14px;font-size:13px;line-height:1.4;box-shadow:0 14px 34px rgba(0,0,0,.3);display:flex;gap:10px;align-items:flex-start">
+          <div style="flex:1;min-width:0">${storageErr}</div>
+          <button onClick=${() => setStorageErr('')}
+            style="background:none;border:none;color:#fff;font-size:18px;line-height:1;cursor:pointer;min-width:28px;min-height:28px;display:flex;align-items:center;justify-content:center;margin-top:-4px">×</button>
         </div>` : null}
       <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meals=${meals} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
