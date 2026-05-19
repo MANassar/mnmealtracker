@@ -2,6 +2,11 @@
   publish = "."
   functions = "netlify/functions"
 
+# MEAL_TRACKER_TOKEN is intentionally embedded in the public client bundle (analytics-config.js).
+# It is not a traditional secret — it provides friction against casual API abuse, not confidentiality.
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "MEAL_TRACKER_TOKEN"
+
 [[headers]]
   for = "/*"
   [headers.values]
