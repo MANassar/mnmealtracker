@@ -198,9 +198,10 @@ const initAnalytics = () => {
       disable_session_recording: analyticsConfig.sessionReplay === false,
       mask_all_text: true,
       mask_all_element_attributes: true,
-      person_profiles: 'identified_only',
+      person_profiles: 'always',
     });
     trackEvent('app_loaded', { version: APP_VERSION, installed: isStandaloneApp() });
+    trackPageview('app_loaded', { view: 'today' });
   };
   script.onerror = () => {};
   document.head.appendChild(script);
@@ -208,6 +209,14 @@ const initAnalytics = () => {
 const trackEvent = (name, props = {}) => {
   // Analytics events must never include meal descriptions, ingredients, photos, or keys.
   try { window.posthog?.capture?.(name, safeAnalyticsProps({ version: APP_VERSION, ...props })); } catch {}
+};
+const trackPageview = (source, props = {}) => {
+  trackEvent('$pageview', {
+    source,
+    path: location.pathname || '/',
+    installed: isStandaloneApp(),
+    ...props,
+  });
 };
 const isStandaloneApp = () =>
   window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
@@ -1631,6 +1640,7 @@ function App() {
   useEffect(() => {
     // Track view changes manually because this single-page app has no route changes.
     trackEvent('app_viewed', { view, editing: Boolean(editingMeal) });
+    trackPageview('app_viewed', { view, editing: Boolean(editingMeal) });
   }, [view, editingMeal]);
 
   useEffect(() => {
