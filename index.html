@@ -170,6 +170,8 @@ const DELETED_MEALS_KEY = 'mt_deleted_meals_v1';
 const SETT_KEY    = 'mt_settings_v1';
 const APP_VERSION = window.APP_VERSION || '0.1.1';
 const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
+const FEEDBACK_FORM_URL = 'https://bit.ly/4dAU3UV';
+const FEEDBACK_EMBED_URL = 'https://manassar.notion.site/ebd//394fd2798c9a4a0cbb9aeba585fb2938';
 
 /* ── Analytics ─────────────────────────────────────────── */
 const analyticsConfig = window.POSTHOG_CONFIG || {};
@@ -1049,8 +1051,9 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
 }
 
 /* ── Today View ─────────────────────────────────────────── */
-function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
+function TodayView({ meals, targets, onDelete, onEdit, onSettings, onFeedback }) {
   // Today is derived from the full meal list each render, keeping storage simple.
+  const [showFeedbackButton, setShowFeedbackButton] = useState(true);
   const today   = meals.filter(m => m.date === todayStr());
   const cal     = sum(today, 'calories'), protein = sum(today, 'protein');
   const carbs   = sum(today, 'carbs'),    fat     = sum(today, 'fat');
@@ -1094,6 +1097,17 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
             </div>` : null}
         </div>
       </div>
+      ${showFeedbackButton ? html`
+        <div style="position:fixed;right:14px;bottom:calc(var(--tab-h) + var(--sab) + 14px);z-index:25;display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:6px;box-shadow:0 12px 28px rgba(0,0,0,.28)">
+          <button onClick=${() => onFeedback('home_floating')}
+            style="background:var(--accent);border:none;border-radius:999px;color:#0c1a10;font-size:13px;font-weight:700;min-height:38px;padding:0 14px;cursor:pointer">
+            Feedback
+          </button>
+          <button aria-label="Dismiss feedback button" onClick=${() => setShowFeedbackButton(false)}
+            style="background:var(--surface);border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:18px;line-height:1;min-width:34px;min-height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center">
+            ×
+          </button>
+        </div>` : null}
     </div>`;
 }
 
@@ -1236,7 +1250,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport, onClea
 }
 
 /* ── Settings View ──────────────────────────────────────── */
-function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
+function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedback }) {
   // Settings edits are staged locally until Save so Back can discard theme changes.
   const [provider,     setProvider]     = useState(settings.provider     || 'server');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
@@ -1455,12 +1469,43 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport }) {
           ${importMsg ? html`<div style="color:${importMsg.startsWith('Import failed') ? 'var(--danger)' : importMsg === 'Import canceled.' ? 'var(--muted)' : 'var(--mint)'}">${importMsg}</div>` : null}
         </div>
 
+        <div style="font-size:12px;color:var(--muted);line-height:1.9;padding:14px;background:var(--card);border-radius:12px;margin-bottom:16px">
+          <div style="color:var(--text);font-weight:600;margin-bottom:8px">Feedback</div>
+          <button onClick=${() => onFeedback('settings')}
+            style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer">
+            Send Feedback
+          </button>
+        </div>
+
         <div style="font-size:12px;color:var(--muted);padding:14px;background:var(--card);border-radius:12px;line-height:1.7">
           <div style="color:var(--text);font-weight:600;margin-bottom:6px">📱 Install as app</div>
           <div><strong style="color:var(--text)">iOS Safari:</strong> Share → Add to Home Screen</div>
           <div><strong style="color:var(--text)">Android Chrome:</strong> ⋮ → Add to Home Screen</div>
           <div style="margin-top:8px;color:var(--muted);font-family:'DM Mono',monospace">Version ${APP_VERSION}</div>
         </div>
+      </div>
+    </div>`;
+}
+
+function FeedbackModal({ onClose }) {
+  return html`
+    <div role="dialog" aria-modal="true" aria-label="Feedback form"
+      style="position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.58);display:flex;align-items:stretch;justify-content:center;padding:calc(var(--sat) + 12px) 12px calc(var(--sab) + 12px)">
+      <div style="width:min(720px,100%);height:100%;background:var(--surface);border:1px solid var(--border);border-radius:18px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.45)">
+        <div style="height:56px;display:flex;align-items:center;gap:10px;padding:8px 10px 8px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--card)">
+          <div style="flex:1;min-width:0;color:var(--text);font-weight:700;font-size:14px">Send Feedback</div>
+          <a href=${FEEDBACK_FORM_URL} target="_blank" rel="noopener noreferrer"
+            style="color:var(--muted);font-size:12px;font-weight:600;padding:10px 8px;white-space:nowrap">
+            Open in browser
+          </a>
+          <button aria-label="Close feedback form" onClick=${onClose}
+            style="background:var(--surface);border:1px solid var(--border);border-radius:999px;color:var(--text);font-size:20px;line-height:1;min-width:38px;min-height:38px;cursor:pointer;display:flex;align-items:center;justify-content:center">
+            ×
+          </button>
+        </div>
+        <iframe src=${FEEDBACK_EMBED_URL} title="Meal Tracker feedback form" frameborder="0" allowfullscreen
+          style="width:100%;height:100%;border:0;background:var(--surface);flex:1;min-height:0">
+        </iframe>
       </div>
     </div>`;
 }
@@ -1478,6 +1523,7 @@ function App() {
   const [editingMeal, setEditingMeal] = useState(null);
   const [editReturnView, setEditReturnView] = useState('today');
   const [storageErr, setStorageErr] = useState('');
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   useEffect(() => {
     // Keep app chrome and browser theme color in sync with saved settings.
@@ -1614,6 +1660,10 @@ function App() {
     if (ok) trackEvent('meals_imported', { mode, imported_count_bucket: valueBucket(importedCount, 10) });
     return ok ? 'merge' : 'cancel';
   };
+  const openFeedback = source => {
+    trackEvent('feedback_opened', { source, installed: isStandaloneApp() });
+    setFeedbackOpen(true);
+  };
 
   const NAV = [
     { key: 'today',   icon: '◉', label: 'Home'    },
@@ -1625,6 +1675,7 @@ function App() {
 
   return html`
     <div style="display:flex;flex-direction:column;height:100%;background:var(--bg);padding-bottom:${view !== 'add' && view !== 'settings' ? 'calc(var(--tab-h) + var(--sab))' : '0'}">
+      ${feedbackOpen ? html`<${FeedbackModal} onClose=${() => setFeedbackOpen(false)}/>` : null}
       ${storageErr ? html`
         <div style="position:fixed;left:12px;right:12px;top:calc(var(--sat) + 10px);z-index:50;background:var(--danger);color:#fff;border-radius:12px;padding:12px 12px 12px 14px;font-size:13px;line-height:1.4;box-shadow:0 14px 34px rgba(0,0,0,.3);display:flex;gap:10px;align-items:flex-start">
           <div style="flex:1;min-width:0">${storageErr}</div>
@@ -1633,9 +1684,9 @@ function App() {
         </div>` : null}
       <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meals=${meals} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
-          view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals}/>` :
+          view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
-                                html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
+                                html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')} onFeedback=${openFeedback}/>`}
       </div>
 
       ${view !== 'add' && view !== 'settings' ? html`
