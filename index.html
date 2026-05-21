@@ -225,6 +225,9 @@ const mealAnalyticsProps = (meal, meta = {}) => ({
   calories_bucket: valueBucket(meal?.calories, 100),
   source: meta.source || 'analysis',
   optimized: Boolean(meta.optimized),
+  nutrition_edited: Boolean(meta.nutritionEdited),
+  nutrition_field_count: Number(meta.nutritionFieldCount || 0),
+  nutrition_fields: meta.nutritionFields || '',
 });
 initAnalytics();
 
@@ -533,9 +536,9 @@ async function callOpenAIOptimization(analysis, desc, key) {
   return d.text || '';
 }
 
-const providerColor = provider => provider === 'anthropic' ? 'var(--accent)' : 'var(--oai)';
-const providerBg = provider => provider === 'anthropic' ? 'rgba(201,168,76,.12)' : 'rgba(116,170,156,.12)';
-const providerLabel = provider => provider === 'anthropic' ? 'Claude' : provider === 'openai' ? 'GPT-4o' : 'Server';
+const providerColor = provider => provider === 'anthropic' ? 'var(--accent)' : provider === 'user' ? 'var(--plum)' : 'var(--oai)';
+const providerBg = provider => provider === 'anthropic' ? 'rgba(201,168,76,.12)' : provider === 'user' ? 'rgba(168,130,196,.12)' : 'rgba(116,170,156,.12)';
+const providerLabel = provider => provider === 'anthropic' ? 'Claude' : provider === 'openai' ? 'GPT-4o' : provider === 'user' ? 'User' : 'Server';
 const normalizeProviderSetting = settings =>
   // Manual providers are only considered active when their matching key exists.
   settings?.provider === 'anthropic' && settings.anthropicKey?.trim() ? 'anthropic' :
@@ -684,11 +687,16 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   const [status,   setStatus]   = useState(meal ? 'review' : 'idle');
   const [analysis, setAnalysis] = useState(initialAnalysis);
   const [editCal,  setEditCal]  = useState(meal ? String(Math.round(meal.calories)) : '');
+  const [editProtein, setEditProtein] = useState(meal ? String(Number(meal.protein || 0).toFixed(1)) : '');
+  const [editCarbs,   setEditCarbs]   = useState(meal ? String(Number(meal.carbs || 0).toFixed(1)) : '');
+  const [editFat,     setEditFat]     = useState(meal ? String(Number(meal.fat || 0).toFixed(1)) : '');
+  const [editFiber,   setEditFiber]   = useState(meal ? String(Number(meal.fiber || 0).toFixed(1)) : '');
+  const [userEditedNutrition, setUserEditedNutrition] = useState(false);
+  const [analysisProvider, setAnalysisProvider] = useState(meal?.provider || activeProvider);
   const [optStatus, setOptStatus] = useState('idle');
   const [optimization, setOptimization] = useState(null);
   const [err,      setErr]      = useState('');
   const fileRef = useRef();
-  const pc = providerColor(activeProvider);
 
   useEffect(() => {
     // Transient Add Meal errors should clear themselves, while still being dismissible.
@@ -716,7 +724,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   const pick = async e => {
     // Choosing a new photo invalidates the current analysis until re-run.
     const f = e.target.files?.[0]; if (!f) return;
-    setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); setErr('');
+    setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); setErr(''); setUserEditedNutrition(false); setAnalysisProvider(activeProvider);
     try {
       const processed = await imageToMealPayload(f);
       setImg({ url: `data:${processed.type};base64,${processed.b64}`, ...processed });
@@ -747,7 +755,8 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
       portionNote: item.portionNote || '',
       confidence: item.confidence || 'medium',
     });
-    setEditCal(String(Math.round(item.calories)));
+    setEditableNutrition(item);
+    setAnalysisProvider(item.provider || activeProvider);
     setOptimization(null);
     setOptStatus('idle');
     setErr('');
@@ -764,6 +773,51 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     return `${n > 0 ? '+' : ''}${rounded}${unit}`;
   };
   const macroImpact = (next, base, key, unit = 'g') => formatDelta(Number(next?.[key] || 0) - Number(base?.[key] || 0), unit);
+  const nutritionNumber = (value, fallback = 0) => {
+    if (String(value ?? '').trim() === '') return fallback;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const setEditableNutrition = next => {
+    setEditCal(String(Math.round(next?.calories || 0)));
+    setEditProtein(String(Number(next?.protein || 0).toFixed(1)));
+    setEditCarbs(String(Number(next?.carbs || 0).toFixed(1)));
+    setEditFat(String(Number(next?.fat || 0).toFixed(1)));
+    setEditFiber(String(Number(next?.fiber || 0).toFixed(1)));
+    setUserEditedNutrition(false);
+  };
+  const markNutritionEdited = field => {
+    if (!userEditedNutrition) trackEvent('meal_nutrition_edited', { field, source: isEditing ? 'edit' : 'add' });
+    setUserEditedNutrition(true);
+  };
+  const hasNutritionEdits = sourceAnalysis => {
+    const same = (a, b) => Math.abs(nutritionNumber(a, 0) - nutritionNumber(b, 0)) < 0.05;
+    return !same(editCal, sourceAnalysis.calories)
+      || !same(editProtein, sourceAnalysis.protein)
+      || !same(editCarbs, sourceAnalysis.carbs)
+      || !same(editFat, sourceAnalysis.fat)
+      || !same(editFiber, sourceAnalysis.fiber || 0);
+  };
+  const changedNutritionFields = sourceAnalysis => {
+    const same = (a, b) => Math.abs(nutritionNumber(a, 0) - nutritionNumber(b, 0)) < 0.05;
+    return [
+      ['calories', editCal, sourceAnalysis.calories],
+      ['protein', editProtein, sourceAnalysis.protein],
+      ['carbs', editCarbs, sourceAnalysis.carbs],
+      ['fat', editFat, sourceAnalysis.fat],
+      ['fiber', editFiber, sourceAnalysis.fiber || 0],
+    ].filter(([, next, previous]) => !same(next, previous)).map(([field]) => field);
+  };
+  const NutritionInput = ({ label, value, onInput, color, field }) => html`
+    <label style="background:var(--surface);border-radius:10px;padding:8px 4px;text-align:center;display:block">
+      <input type="number" min="0" step="0.1" value=${value} onInput=${e => { markNutritionEdited(field); onInput(e.target.value); }}
+        style="width:100%;background:transparent;border:none;border-bottom:1px solid ${color};color:${color};font-size:16px;font-weight:700;font-family:'DM Mono',monospace;text-align:center;outline:none;padding:2px 0"/>
+      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:5px">${label}</div>
+    </label>`;
+  const nutritionIsEdited = analysis ? hasNutritionEdits(analysis) : false;
+  const displayProvider = status === 'review' ? (nutritionIsEdited ? 'user' : analysisProvider) : activeProvider;
+  const pc = providerColor(displayProvider);
+  const aiColor = providerColor(activeProvider);
   const suggestionText = suggestion => typeof suggestion === 'string' ? suggestion : suggestion?.text || suggestion?.suggestion || '';
   const suggestionImpact = suggestion => {
     // New AI responses provide per-suggestion macro deltas; old string suggestions still render.
@@ -794,7 +848,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
         ? await callAnthropic(img, trimmedDesc, key)
         : await callOpenAI(img, trimmedDesc, key);
       const parsed = parseAiJson(raw);
-      setAnalysis(parsed); setEditCal(String(Math.round(parsed.calories))); setStatus('review');
+      setAnalysis(parsed); setEditableNutrition(parsed); setAnalysisProvider(activeProvider); setStatus('review');
       trackEvent('meal_analysis_succeeded', {
         provider: activeProvider,
         used_image: Boolean(img),
@@ -817,7 +871,14 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
   const optimizeCalories = async () => {
     // Optimization is a second, optional AI call that starts from the reviewed analysis.
     if (!analysis) return;
-    const reviewedAnalysis = { ...analysis, calories: parseInt(editCal) || analysis.calories };
+    const reviewedAnalysis = {
+      ...analysis,
+      calories: nutritionNumber(editCal, analysis.calories),
+      protein: nutritionNumber(editProtein, analysis.protein),
+      carbs: nutritionNumber(editCarbs, analysis.carbs),
+      fat: nutritionNumber(editFat, analysis.fat),
+      fiber: nutritionNumber(editFiber, analysis.fiber || 0),
+    };
     const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
     setOptStatus('optimizing'); setOptimization(null); setErr('');
     trackEvent('meal_optimization_started', {
@@ -843,24 +904,41 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     }
   };
 
-  const log = (sourceAnalysis = analysis, calorieOverride = editCal, source = 'analysis') => {
+  const log = (sourceAnalysis = analysis, source = 'analysis') => {
     // Saving reuses the current analysis. If only the date changed, no AI call runs.
     if (!sourceAnalysis) return;
+    const changedFields = source === 'analysis' ? changedNutritionFields(sourceAnalysis) : [];
+    const editedByUser = changedFields.length > 0;
+    const providerSource = editedByUser ? 'user' : source === 'analysis' ? analysisProvider : activeProvider;
+    const reviewedAnalysis = source === 'analysis' ? {
+      ...sourceAnalysis,
+      calories: nutritionNumber(editCal, sourceAnalysis.calories),
+      protein: nutritionNumber(editProtein, sourceAnalysis.protein),
+      carbs: nutritionNumber(editCarbs, sourceAnalysis.carbs),
+      fat: nutritionNumber(editFat, sourceAnalysis.fat),
+      fiber: nutritionNumber(editFiber, sourceAnalysis.fiber || 0),
+    } : sourceAnalysis;
     onSave({
       id: meal?.id || Date.now(),
       date: mealDate || meal?.date || todayStr(),
       timestamp: meal?.timestamp || new Date().toISOString(),
       updatedAt: isEditing ? new Date().toISOString() : undefined,
-      description: desc.trim(), provider: activeProvider,
+      description: desc.trim(), provider: providerSource,
       imageData: img?.b64 || null, imageType: img?.type || null,
-      mealName:    sourceAnalysis.mealName,
-      calories:    parseInt(calorieOverride) || sourceAnalysis.calories,
-      protein:     sourceAnalysis.protein,  carbs:  sourceAnalysis.carbs,
-      fat:         sourceAnalysis.fat,      fiber:  sourceAnalysis.fiber || 0,
-      ingredients: sourceAnalysis.ingredients  || [],
-      portionNote: sourceAnalysis.portionNote  || '',
-      confidence:  sourceAnalysis.confidence   || 'medium',
-    }, { source, optimized: source === 'optimized' });
+      mealName:    reviewedAnalysis.mealName,
+      calories:    reviewedAnalysis.calories,
+      protein:     reviewedAnalysis.protein,  carbs:  reviewedAnalysis.carbs,
+      fat:         reviewedAnalysis.fat,      fiber:  reviewedAnalysis.fiber || 0,
+      ingredients: reviewedAnalysis.ingredients  || [],
+      portionNote: reviewedAnalysis.portionNote  || '',
+      confidence:  reviewedAnalysis.confidence   || 'medium',
+    }, {
+      source: editedByUser ? 'user' : source,
+      optimized: source === 'optimized',
+      nutritionEdited: editedByUser,
+      nutritionFieldCount: changedFields.length,
+      nutritionFields: changedFields.join(','),
+    });
   };
 
   return html`
@@ -871,8 +949,8 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
           <button onClick=${onCancel}
             style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center">←</button>
           <span style="font-family:'Playfair Display',serif;font-size:22px;color:var(--text);flex:1">${isEditing ? 'Edit Meal' : 'Add Meal'}</span>
-          <span style="font-size:10px;color:${pc};background:${providerBg(activeProvider)};padding:4px 10px;border-radius:20px;border:1px solid ${pc};letter-spacing:.06em;text-transform:uppercase;font-weight:600">
-            ${providerLabel(activeProvider)}
+          <span style="font-size:10px;color:${pc};background:${providerBg(displayProvider)};padding:4px 10px;border-radius:20px;border:1px solid ${pc};letter-spacing:.06em;text-transform:uppercase;font-weight:600">
+            ${providerLabel(displayProvider)}
           </span>
         </div>
       </div>
@@ -888,7 +966,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
           ${img ? html`
             <div style="position:relative">
               <img class="ph-no-capture" src=${img.url} style="width:100%;max-height:240px;object-fit:cover;display:block"/>
-              <button onClick=${e => { e.stopPropagation(); setImg(null); setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); fileRef.current.value = ''; }}
+              <button onClick=${e => { e.stopPropagation(); setImg(null); setAnalysis(null); setOptimization(null); setOptStatus('idle'); setStatus('idle'); setUserEditedNutrition(false); setAnalysisProvider(activeProvider); fileRef.current.value = ''; }}
                 style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,.65);border:none;color:var(--text);border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center">×</button>
             </div>` : html`
             <div style="text-align:center;color:var(--muted);padding:20px">
@@ -933,18 +1011,20 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
             <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text);margin-bottom:12px">${analysis.mealName}</div>
             <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:12px">
               <span style="font-size:12px;color:var(--muted);flex:1">Calories</span>
-              <input type="number" value=${editCal} onInput=${e => setEditCal(e.target.value)}
+              <input type="number" min="0" step="1" value=${editCal} onInput=${e => { markNutritionEdited('calories'); setEditCal(e.target.value); }}
                 style="width:72px;background:transparent;border:none;border-bottom:1px solid ${pc};color:${pc};font-size:22px;font-family:'DM Mono',monospace;font-weight:700;text-align:center;outline:none;padding:2px 0"/>
               <span style="font-size:12px;color:var(--muted)">kcal</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
-              ${[['Protein', analysis.protein, 'var(--mint)'], ['Carbs', analysis.carbs, 'var(--sky)'],
-                 ['Fat', analysis.fat, 'var(--peach)'], ['Fiber', analysis.fiber || 0, 'var(--plum)']].map(([l, v, c]) => html`
-                <div style="background:var(--surface);border-radius:10px;padding:10px 4px;text-align:center">
-                  <div style="font-size:16px;font-weight:700;color:${c};font-family:'DM Mono',monospace">${Number(v).toFixed(1)}</div>
-                  <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:3px">${l}</div>
-                </div>`)}
+              <${NutritionInput} label="Protein" value=${editProtein} onInput=${setEditProtein} color="var(--mint)" field="protein"/>
+              <${NutritionInput} label="Carbs" value=${editCarbs} onInput=${setEditCarbs} color="var(--sky)" field="carbs"/>
+              <${NutritionInput} label="Fat" value=${editFat} onInput=${setEditFat} color="var(--peach)" field="fat"/>
+              <${NutritionInput} label="Fiber" value=${editFiber} onInput=${setEditFiber} color="var(--plum)" field="fiber"/>
             </div>
+            ${nutritionIsEdited ? html`
+              <div style="font-size:10px;color:var(--plum);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">
+                Source will be saved as User
+              </div>` : null}
             ${analysis.portionNote ? html`
               <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(${activeProvider === 'anthropic' ? '201,168,76' : '116,170,156'},.06);border-radius:8px;border-left:2px solid ${pc}">
                 ${analysis.portionNote}
@@ -960,7 +1040,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
                 <div style="font-size:13px;color:var(--text);line-height:1.35">Ask AI for a lower-calorie version before logging.</div>
               </div>
               <button onClick=${optimizeCalories} disabled=${optStatus === 'optimizing'}
-                style="flex:0 0 auto;background:${optStatus === 'optimizing' ? 'var(--muted)' : 'var(--surface)'};border:1px solid ${pc};color:${optStatus === 'optimizing' ? 'var(--surface)' : pc};border-radius:10px;padding:10px 12px;font-size:12px;font-weight:700;cursor:${optStatus === 'optimizing' ? 'not-allowed' : 'pointer'}">
+                style="flex:0 0 auto;background:${optStatus === 'optimizing' ? 'var(--muted)' : 'var(--surface)'};border:1px solid ${aiColor};color:${optStatus === 'optimizing' ? 'var(--surface)' : aiColor};border-radius:10px;padding:10px 12px;font-size:12px;font-weight:700;cursor:${optStatus === 'optimizing' ? 'not-allowed' : 'pointer'}">
                 ${optStatus === 'optimizing' ? 'Optimizing…' : optimization ? 'Try Again' : 'Optimize'}
               </button>
             </div>
@@ -972,7 +1052,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
                     ${optimization.calorieSavings ? html`
                       <div style="font-size:11px;color:var(--mint);font-family:'DM Mono',monospace;margin-top:4px">-${Math.round(optimization.calorieSavings)} kcal estimated</div>` : null}
                   </div>
-                  <div style="font-size:20px;color:${pc};font-family:'DM Mono',monospace;font-weight:700;white-space:nowrap">${Math.round(optimization.calories || 0)} kcal</div>
+                  <div style="font-size:20px;color:${aiColor};font-family:'DM Mono',monospace;font-weight:700;white-space:nowrap">${Math.round(optimization.calories || 0)} kcal</div>
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px">
                   ${[['P', optimization.protein], ['C', optimization.carbs], ['F', optimization.fat], ['Fi', optimization.fiber || 0]].map(([l, v]) => html`
@@ -1008,8 +1088,8 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
                   </div>` : null}
                 ${optimization.portionNote ? html`
                   <div style="font-size:11px;color:var(--muted);font-style:italic;line-height:1.35;margin-bottom:10px">${optimization.portionNote}</div>` : null}
-                <button onClick=${() => log(optimization, optimization.calories, 'optimized')}
-                  style="width:100%;padding:13px;background:${pc};border:none;border-radius:10px;font-size:14px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:46px">
+                <button onClick=${() => log(optimization, 'optimized')}
+                  style="width:100%;padding:13px;background:${aiColor};border:none;border-radius:10px;font-size:14px;font-weight:700;color:#0c1a10;cursor:pointer;min-height:46px">
                   Accept & Log ✓
                 </button>
               </div>` : null}
