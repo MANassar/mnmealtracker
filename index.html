@@ -200,6 +200,15 @@ const initAnalytics = () => {
       mask_all_element_attributes: true,
       person_profiles: 'always',
     });
+    // Identify with a stable anonymous ID so PostHog counts this device as a person.
+    try {
+      let anonId = localStorage.getItem('mt_anon_id');
+      if (!anonId) {
+        anonId = 'anon-' + crypto.randomUUID();
+        localStorage.setItem('mt_anon_id', anonId);
+      }
+      window.posthog?.identify?.(anonId);
+    } catch {}
     trackEvent('app_loaded', { version: APP_VERSION, installed: isStandaloneApp() });
     trackPageview('app_loaded', { view: 'today' });
   };
