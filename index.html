@@ -605,7 +605,7 @@ function MBar({ label, value, max, color }) {
 }
 
 /* ── MealCard ───────────────────────────────────────────── */
-function MealCard({ meal, onDelete, onEdit }) {
+function MealCard({ meal, onDelete, onEdit, onLogAgain }) {
   // Cards stay compact by default and expand inline for details/actions.
   const [open, setOpen] = useState(false);
   const pc   = providerColor(meal.provider);
@@ -658,6 +658,12 @@ function MealCard({ meal, onDelete, onEdit }) {
               <span style="color:var(--accent)">Note:</span> ${meal.description}
             </div>` : null}
           <div style="display:flex;gap:10px;margin-top:12px">
+            ${onLogAgain ? html`
+              <button
+                onClick=${e => { e.stopPropagation(); onLogAgain(meal); }}
+                style="flex:1;background:${pc};border:1px solid ${pc};color:#0c1a10;border-radius:8px;padding:0 14px;font-size:11px;font-weight:700;cursor:pointer;height:38px">
+                Log again
+              </button>` : null}
             <button
               onClick=${e => { e.stopPropagation(); onEdit(meal); }}
               style="flex:1;background:none;border:1px solid ${pc};color:${pc};border-radius:8px;padding:0 14px;font-size:11px;cursor:pointer;height:38px">
@@ -674,8 +680,8 @@ function MealCard({ meal, onDelete, onEdit }) {
 }
 
 /* ── Add Meal View ──────────────────────────────────────── */
-function AddView({ settings, meal, meals = [], onSave, onCancel }) {
-  // AddView also powers editing; an existing meal preloads analysis and media.
+function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
+  // AddView also powers editing and repeat logging; only `meal` updates an existing record.
   const { provider = 'server', anthropicKey = '', oaiKey = '' } = settings;
   const trimmedAnthropicKey = anthropicKey.trim();
   const trimmedOaiKey = oaiKey.trim();
@@ -684,33 +690,34 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     provider === 'openai' && trimmedOaiKey ? 'openai' :
     'server';
   const isEditing = Boolean(meal);
-  const initialAnalysis = meal ? {
-    mealName: meal.mealName,
-    calories: meal.calories,
-    protein: meal.protein,
-    carbs: meal.carbs,
-    fat: meal.fat,
-    fiber: meal.fiber || 0,
-    ingredients: meal.ingredients || [],
-    portionNote: meal.portionNote || '',
-    confidence: meal.confidence || 'medium',
+  const seedMeal = meal || repeatMeal;
+  const initialAnalysis = seedMeal ? {
+    mealName: seedMeal.mealName,
+    calories: seedMeal.calories,
+    protein: seedMeal.protein,
+    carbs: seedMeal.carbs,
+    fat: seedMeal.fat,
+    fiber: seedMeal.fiber || 0,
+    ingredients: seedMeal.ingredients || [],
+    portionNote: seedMeal.portionNote || '',
+    confidence: seedMeal.confidence || 'medium',
   } : null;
-  const [img,      setImg]      = useState(meal?.imageData ? {
-    url: `data:${meal.imageType};base64,${meal.imageData}`,
-    b64: meal.imageData,
-    type: meal.imageType,
+  const [img,      setImg]      = useState(seedMeal?.imageData ? {
+    url: `data:${seedMeal.imageType};base64,${seedMeal.imageData}`,
+    b64: seedMeal.imageData,
+    type: seedMeal.imageType,
   } : null);
-  const [desc,     setDesc]     = useState(meal?.description || '');
-  const [mealDate, setMealDate] = useState(meal?.date || todayStr());
-  const [status,   setStatus]   = useState(meal ? 'review' : 'idle');
+  const [desc,     setDesc]     = useState(seedMeal?.description || '');
+  const [mealDate, setMealDate] = useState(isEditing ? meal?.date : todayStr());
+  const [status,   setStatus]   = useState(seedMeal ? 'review' : 'idle');
   const [analysis, setAnalysis] = useState(initialAnalysis);
-  const [editCal,  setEditCal]  = useState(meal ? String(Math.round(meal.calories)) : '');
-  const [editProtein, setEditProtein] = useState(meal ? String(Number(meal.protein || 0).toFixed(1)) : '');
-  const [editCarbs,   setEditCarbs]   = useState(meal ? String(Number(meal.carbs || 0).toFixed(1)) : '');
-  const [editFat,     setEditFat]     = useState(meal ? String(Number(meal.fat || 0).toFixed(1)) : '');
-  const [editFiber,   setEditFiber]   = useState(meal ? String(Number(meal.fiber || 0).toFixed(1)) : '');
+  const [editCal,  setEditCal]  = useState(seedMeal ? String(Math.round(seedMeal.calories)) : '');
+  const [editProtein, setEditProtein] = useState(seedMeal ? String(Number(seedMeal.protein || 0).toFixed(1)) : '');
+  const [editCarbs,   setEditCarbs]   = useState(seedMeal ? String(Number(seedMeal.carbs || 0).toFixed(1)) : '');
+  const [editFat,     setEditFat]     = useState(seedMeal ? String(Number(seedMeal.fat || 0).toFixed(1)) : '');
+  const [editFiber,   setEditFiber]   = useState(seedMeal ? String(Number(seedMeal.fiber || 0).toFixed(1)) : '');
   const [userEditedNutrition, setUserEditedNutrition] = useState(false);
-  const [analysisProvider, setAnalysisProvider] = useState(meal?.provider || activeProvider);
+  const [analysisProvider, setAnalysisProvider] = useState(seedMeal?.provider || activeProvider);
   const [optStatus, setOptStatus] = useState('idle');
   const [optimization, setOptimization] = useState(null);
   const [err,      setErr]      = useState('');
@@ -923,21 +930,22 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
     }
   };
 
-  const log = (sourceAnalysis = analysis, source = 'analysis') => {
+  const log = (sourceAnalysis = analysis, source = repeatMeal ? 'log_again' : 'analysis') => {
     // Saving reuses the current analysis. If only the date changed, no AI call runs.
     if (!sourceAnalysis) return;
     document.activeElement?.blur?.();
-    const changedFields = source === 'analysis' ? changedNutritionFields(sourceAnalysis) : [];
+    const optimized = source === 'optimized';
+    const changedFields = optimized ? [] : changedNutritionFields(sourceAnalysis);
     const editedByUser = changedFields.length > 0;
-    const providerSource = editedByUser ? 'user' : source === 'analysis' ? analysisProvider : activeProvider;
-    const reviewedAnalysis = source === 'analysis' ? {
+    const providerSource = editedByUser ? 'user' : optimized ? activeProvider : analysisProvider;
+    const reviewedAnalysis = optimized ? sourceAnalysis : {
       ...sourceAnalysis,
       calories: nutritionNumber(editCal, sourceAnalysis.calories),
       protein: nutritionNumber(editProtein, sourceAnalysis.protein),
       carbs: nutritionNumber(editCarbs, sourceAnalysis.carbs),
       fat: nutritionNumber(editFat, sourceAnalysis.fat),
       fiber: nutritionNumber(editFiber, sourceAnalysis.fiber || 0),
-    } : sourceAnalysis;
+    };
     onSave({
       id: meal?.id || Date.now(),
       date: mealDate || meal?.date || todayStr(),
@@ -954,7 +962,7 @@ function AddView({ settings, meal, meals = [], onSave, onCancel }) {
       confidence:  reviewedAnalysis.confidence   || 'medium',
     }, {
       source: editedByUser ? 'user' : source,
-      optimized: source === 'optimized',
+      optimized,
       nutritionEdited: editedByUser,
       nutritionFieldCount: changedFields.length,
       nutritionFields: changedFields.join(','),
@@ -1216,7 +1224,7 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings, onFeedback })
 }
 
 /* ── History View ───────────────────────────────────────── */
-function HistView({ meals, targets, onDelete, onEdit, onExport, onImport, onClear }) {
+function HistView({ meals, targets, onDelete, onEdit, onLogAgain, onExport, onImport, onClear }) {
   // History owns its small data menu, while actual import/export lives in App.
   const groups = groupByDate(meals);
   const [importMsg, setImportMsg] = useState('');
@@ -1344,7 +1352,7 @@ function HistView({ meals, targets, onDelete, onEdit, onExport, onImport, onClea
                 <div style="height:2px;background:var(--card);border-radius:1px;margin-bottom:8px">
                   <div style="height:100%;width:${Math.min((cal / targets.calories) * 100, 100)}%;background:${over ? 'var(--danger)' : 'var(--accent)'};border-radius:1px"/>
                 </div>
-                ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit}/>`)}
+                ${sortedDayMeals.map(m => html`<${MealCard} key=${m.id} meal=${m} onDelete=${onDelete} onEdit=${onEdit} onLogAgain=${onLogAgain}/>`)}
               </div>
             `;
           })}
@@ -1631,6 +1639,7 @@ function App() {
   });
   const [view,    setView]     = useState('today');
   const [editingMeal, setEditingMeal] = useState(null);
+  const [repeatMeal, setRepeatMeal] = useState(null);
   const [editReturnView, setEditReturnView] = useState('today');
   const [storageErr, setStorageErr] = useState('');
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -1682,6 +1691,7 @@ function App() {
     const u = [meal, ...meals];
     if (persistMeals(u)) {
       trackEvent('meal_logged', mealAnalyticsProps(meal, meta));
+      setRepeatMeal(null);
       setView('today');
     }
   };
@@ -1697,8 +1707,20 @@ function App() {
   const saveMeal = (meal, meta) => editingMeal ? updateMeal(meal, meta) : addMeal(meal, meta);
   const editMeal = meal => {
     trackEvent('meal_edit_started', { from_view: view });
+    setRepeatMeal(null);
     setEditingMeal(meal);
     setEditReturnView(view);
+    setView('add');
+  };
+  const logMealAgain = meal => {
+    trackEvent('meal_log_again_started', {
+      source: 'history',
+      provider: meal?.provider || 'unknown',
+      calories_bucket: valueBucket(meal?.calories, 100),
+    });
+    setEditingMeal(null);
+    setRepeatMeal(meal);
+    setEditReturnView('history');
     setView('add');
   };
   const deleteMeal = id => {
@@ -1796,9 +1818,9 @@ function App() {
             style="background:none;border:none;color:#fff;font-size:18px;line-height:1;cursor:pointer;min-width:28px;min-height:28px;display:flex;align-items:center;justify-content:center;margin-top:-4px">×</button>
         </div>` : null}
       <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
-        ${view === 'add'      ? html`<${AddView} key=${editingMeal?.id || 'new'} settings=${settings} meals=${meals} meal=${editingMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setView(editingMeal ? editReturnView : 'today'); }}/>` :
+        ${view === 'add'      ? html`<${AddView} key=${editingMeal ? `edit-${editingMeal.id}` : repeatMeal ? `repeat-${repeatMeal.id}` : 'new'} settings=${settings} meals=${meals} meal=${editingMeal} repeatMeal=${repeatMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setRepeatMeal(null); setView(editingMeal || repeatMeal ? editReturnView : 'today'); }}/>` :
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
-          view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
+          view === 'history'  ? html`<${HistView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onLogAgain=${logMealAgain} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
                                 html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')} onFeedback=${openFeedback}/>`}
       </div>
 
@@ -1808,7 +1830,7 @@ function App() {
             const isAdd  = item.key === 'add';
             const active = view === item.key;
             return html`
-              <button key=${item.key} onClick=${() => { setEditingMeal(null); setView(item.key); }}
+              <button key=${item.key} onClick=${() => { setEditingMeal(null); setRepeatMeal(null); setView(item.key); }}
                 style="flex:1;height:var(--tab-h);padding:${isAdd ? '8px 0 14px' : '12px 0 14px'};
                        background:${isAdd ? navAccent : active ? 'rgba(201,168,76,.12)' : 'none'};
                        border:none;cursor:pointer;
