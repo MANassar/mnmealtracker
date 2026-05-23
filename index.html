@@ -167,6 +167,7 @@ const MEALS_KEY   = 'mt_meals_v1';
 const MEALS_BACKUP_KEY = 'mt_meals_backup_v1';
 const MEALS_SNAP_KEY   = 'mt_meals_snapshots_v1';
 const DELETED_MEALS_KEY = 'mt_deleted_meals_v1';
+const WEIGHTS_KEY  = 'mt_weights_v1';
 const SETT_KEY    = 'mt_settings_v1';
 const APP_VERSION = window.APP_VERSION || '0.1.1';
 const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
@@ -332,14 +333,21 @@ const loadMealBackup = () => {
   const snapshots = parseStoredJson(MEALS_SNAP_KEY, []);
   return mergeMealLists(backup, ...snapshots.map(s => mealListFrom(s)));
 };
-const saveMealBackup = (meals, { resetSnapshots = false } = {}) => {
+const loadWeightBackup = () => {
+  const latest = parseStoredJson(MEALS_BACKUP_KEY, {});
+  if (Array.isArray(latest?.weights)) return latest.weights;
+  const snapshots = parseStoredJson(MEALS_SNAP_KEY, []);
+  const snapshot = snapshots.find(s => Array.isArray(s?.weights));
+  return snapshot ? snapshot.weights : [];
+};
+const saveMealBackup = (meals, weights = [], { resetSnapshots = false } = {}) => {
   // A latest backup plus a few snapshots gives us recovery points after bad writes.
   const slim = meals.map(slimMeal);
   const now = new Date().toISOString();
   try {
-    localStorage.setItem(MEALS_BACKUP_KEY, JSON.stringify({ updatedAt: now, meals: slim }));
+    localStorage.setItem(MEALS_BACKUP_KEY, JSON.stringify({ updatedAt: now, meals: slim, weights }));
     const previous = resetSnapshots ? [] : parseStoredJson(MEALS_SNAP_KEY, []);
-    const snapshots = [{ updatedAt: now, meals: slim }, ...previous].slice(0, 5);
+    const snapshots = [{ updatedAt: now, meals: slim, weights }, ...previous].slice(0, 5);
     localStorage.setItem(MEALS_SNAP_KEY, JSON.stringify(snapshots));
   } catch {}
 };
@@ -353,16 +361,17 @@ const saveMeals    = (m, options = {}) => {
   // Return a result instead of swallowing write failures. Mobile localStorage can
   // fill quickly because meals may include image previews.
   const resetSnapshots = Boolean(options.resetSnapshots);
+  const weights = Array.isArray(options.weights) ? options.weights : loadWeights();
   if (resetSnapshots) resetMealRecovery();
-  saveMealBackup(m, { resetSnapshots });
+  saveMealBackup(m, weights, { resetSnapshots });
   try {
     localStorage.setItem(MEALS_KEY, JSON.stringify(m));
-    saveMealBackup(m, { resetSnapshots });
+    saveMealBackup(m, weights, { resetSnapshots });
     return { ok: true, meals: m, slimmed: false };
   } catch (error) {
     const trimmed = stripOldestMealPhotosUntilSaved(m);
     if (trimmed.ok) {
-      saveMealBackup(trimmed.meals, { resetSnapshots });
+      saveMealBackup(trimmed.meals, weights, { resetSnapshots });
       return { ok: true, meals: trimmed.meals, slimmed: true, removedPhotos: trimmed.removedPhotos, error };
     }
     return { ok: false, error };
@@ -370,8 +379,16 @@ const saveMeals    = (m, options = {}) => {
 };
 const loadSettings = () => { try { return JSON.parse(localStorage.getItem(SETT_KEY)  || '{}'); } catch { return {}; } };
 const saveSettings = s  => { try { localStorage.setItem(SETT_KEY,  JSON.stringify(s)); } catch {} };
-const WEIGHTS_KEY  = 'mt_weights_v1';
-const loadWeights  = () => parseStoredJson(WEIGHTS_KEY, []);
+const loadWeights  = () => {
+  try {
+    const stored = localStorage.getItem(WEIGHTS_KEY);
+    if (stored !== null) {
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return loadWeightBackup();
+};
 const saveWeights  = (w) => { try { localStorage.setItem(WEIGHTS_KEY, JSON.stringify(w)); } catch {} };
 
 /* ── Utils ──────────────────────────────────────────────── */
@@ -1453,7 +1470,7 @@ function HistView({ meals, weights = [], targets, onDelete, onEdit, onLogAgain, 
   const importRef = useRef();
   const finishImport = mode => {
     if (!pendingImport) return;
-    const result = mode ? onImport(pendingImport.meals, mode, pendingImport.weights || []) : 'cancel';
+    const result = mode ? onImport(pendingImport.meals, mode, pendingImport.weights) : 'cancel';
     const m = pendingImport.meals.length, w = (pendingImport.weights || []).length;
     const weightNote = w > 0 ? ` + ${w} weight entr${w === 1 ? 'y' : 'ies'}` : '';
     setImportMsg(result === 'merge'
@@ -1471,7 +1488,8 @@ function HistView({ meals, weights = [], targets, onDelete, onEdit, onLogAgain, 
       const parsed = JSON.parse(await file.text());
       const importedMeals = Array.isArray(parsed) ? parsed : parsed.meals;
       if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
-      const importedWeights = Array.isArray(parsed.weights) ? parsed.weights : [];
+      // Undefined weights means a legacy meal-only backup; an empty array is an intentional empty weight backup.
+      const importedWeights = Array.isArray(parsed.weights) ? parsed.weights : null;
       setPendingImport({ meals: importedMeals, weights: importedWeights });
     } catch (error) {
       setImportMsg(`Import failed: ${error.message}`);
@@ -1550,12 +1568,12 @@ function HistView({ meals, weights = [], targets, onDelete, onEdit, onLogAgain, 
         ${pendingImport ? html`
           <div style="position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;padding:16px">
             <div style="width:min(420px,100%);background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 -14px 34px rgba(0,0,0,.32)">
-              <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Import meal backup</div>
+              <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Import data backup</div>
               <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px">
                 ${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'}${(pendingImport.weights||[]).length > 0 ? ` + ${pendingImport.weights.length} weight entr${pendingImport.weights.length === 1 ? 'y' : 'ies'}` : ''} found
               </div>
-              <button onClick=${() => finishImport('replace')} style="${menuButtonStyle};background:var(--oai);color:#0c1a10;border-color:var(--oai);text-align:center">Replace current meals</button>
-              <button onClick=${() => finishImport('integrate')} style="${menuButtonStyle};margin-top:8px;text-align:center">Integrate with current meals</button>
+              <button onClick=${() => finishImport('replace')} style="${menuButtonStyle};background:var(--oai);color:#0c1a10;border-color:var(--oai);text-align:center">Replace current data</button>
+              <button onClick=${() => finishImport('integrate')} style="${menuButtonStyle};margin-top:8px;text-align:center">Integrate with current data</button>
               <button onClick=${() => finishImport(null)} style="${menuButtonStyle};margin-top:8px;color:var(--muted);text-align:center">Cancel</button>
             </div>
           </div>` : null}
@@ -1717,7 +1735,7 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
 
   const finishImport = mode => {
     if (!pendingImport) return;
-    const result = mode ? onImport(pendingImport.meals, mode, pendingImport.weights || []) : 'cancel';
+    const result = mode ? onImport(pendingImport.meals, mode, pendingImport.weights) : 'cancel';
     const m = pendingImport.meals.length, w = (pendingImport.weights || []).length;
     const weightNote = w > 0 ? ` + ${w} weight entr${w === 1 ? 'y' : 'ies'}` : '';
     setImportMsg(result === 'merge'
@@ -1736,7 +1754,8 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
       const parsed = JSON.parse(await file.text());
       const importedMeals = Array.isArray(parsed) ? parsed : parsed.meals;
       if (!Array.isArray(importedMeals)) throw new Error('No meals array found');
-      const importedWeights = Array.isArray(parsed.weights) ? parsed.weights : [];
+      // Undefined weights means a legacy meal-only backup; an empty array is an intentional empty weight backup.
+      const importedWeights = Array.isArray(parsed.weights) ? parsed.weights : null;
       setPendingImport({ meals: importedMeals, weights: importedWeights });
     } catch (error) {
       setImportMsg(`Import failed: ${error.message}`);
@@ -1750,17 +1769,17 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
       ${pendingImport ? html`
         <div style="position:fixed;inset:0;z-index:35;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;padding:16px">
           <div style="width:min(420px,100%);background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 -14px 34px rgba(0,0,0,.32)">
-            <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Import meal backup</div>
+            <div style="font-family:'Playfair Display',serif;font-size:19px;color:var(--text);margin-bottom:6px">Import data backup</div>
             <div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px">
               ${pendingImport.meals.length} meal${pendingImport.meals.length === 1 ? '' : 's'}${(pendingImport.weights||[]).length > 0 ? ` + ${pendingImport.weights.length} weight entr${pendingImport.weights.length === 1 ? 'y' : 'ies'}` : ''} found
             </div>
             <button onClick=${() => finishImport('replace')}
               style="width:100%;background:var(--oai);border:1px solid var(--oai);color:#0c1a10;border-radius:10px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;text-align:center">
-              Replace current meals
+              Replace current data
             </button>
             <button onClick=${() => finishImport('integrate')}
               style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;text-align:center;margin-top:8px">
-              Integrate with current meals
+              Integrate with current data
             </button>
             <button onClick=${() => finishImport(null)}
               style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;text-align:center;margin-top:8px">
@@ -1967,7 +1986,7 @@ function App() {
   const persistMeals = (nextMeals, options = {}) => {
     // Do not update UI state unless persistence succeeds; otherwise a reload
     // would make the just-entered meal seem to disappear.
-    const result = saveMeals(nextMeals, options);
+    const result = saveMeals(nextMeals, { ...options, weights });
     if (!result.ok) {
       setStorageErr('Meal was not saved. Storage is full; export a backup or delete older meals/photos.');
       return false;
@@ -1977,6 +1996,11 @@ function App() {
       : '');
     setMeals(result.meals);
     return true;
+  };
+  const persistWeights = (nextWeights, snapshotMeals = meals) => {
+    saveWeights(nextWeights);
+    saveMealBackup(snapshotMeals, nextWeights);
+    setWeights(nextWeights);
   };
 
   const addMeal = (meal, meta = {}) => {
@@ -2028,6 +2052,7 @@ function App() {
   const clearMeals = () => {
     // Clear means purge all meal stores, including recovery backups and tombstones.
     purgeMealStorage();
+    saveMealBackup([], weights, { resetSnapshots: true });
     setStorageErr('');
     setMeals([]);
     trackEvent('meals_cleared');
@@ -2070,14 +2095,21 @@ function App() {
     URL.revokeObjectURL(url);
     trackEvent('meals_exported', { meal_count_bucket: valueBucket(meals.length, 10), weight_count_bucket: valueBucket(weights.length, 10) });
   };
-  const importMeals = (importedMeals, mode, importedWeights = []) => {
-    // Import supports replace or integrate; integrate de-dupes by stable meal id.
+  const importMeals = (importedMeals, mode, importedWeights = null) => {
+    // Import supports legacy meal-only backups plus newer meal-and-weight exports.
     const importedCount = importedMeals.length;
+    const importedWeightCount = Array.isArray(importedWeights) ? importedWeights.length : 0;
+    const includesWeights = Array.isArray(importedWeights);
     if (mode === 'replace') {
       const ok = persistMeals(importedMeals, { resetSnapshots: true });
       if (ok) {
-        if (importedWeights.length > 0) { saveWeights(importedWeights); setWeights(importedWeights); }
-        trackEvent('meals_imported', { mode, imported_count_bucket: valueBucket(importedCount, 10) });
+        if (includesWeights) persistWeights(importedWeights, importedMeals);
+        trackEvent('meals_imported', {
+          mode,
+          imported_count_bucket: valueBucket(importedCount, 10),
+          included_weights: includesWeights,
+          imported_weight_count_bucket: valueBucket(importedWeightCount, 10),
+        });
       }
       return ok ? 'replace' : 'cancel';
     }
@@ -2093,12 +2125,17 @@ function App() {
     const merged = [...byId.values()].sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
     const ok = persistMeals(merged);
     if (ok) {
-      if (importedWeights.length > 0) {
+      if (includesWeights && importedWeights.length > 0) {
         const mergedW = [...new Map([...importedWeights, ...weights].map(w => [w.id, w])).values()]
           .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        saveWeights(mergedW); setWeights(mergedW);
+        persistWeights(mergedW, merged);
       }
-      trackEvent('meals_imported', { mode, imported_count_bucket: valueBucket(importedCount, 10) });
+      trackEvent('meals_imported', {
+        mode,
+        imported_count_bucket: valueBucket(importedCount, 10),
+        included_weights: includesWeights,
+        imported_weight_count_bucket: valueBucket(importedWeightCount, 10),
+      });
     }
     return ok ? 'merge' : 'cancel';
   };
@@ -2109,12 +2146,12 @@ function App() {
   };
   const addWeight = entry => {
     const next = [entry, ...weights];
-    saveWeights(next); setWeights(next);
+    persistWeights(next);
     trackEvent('weight_logged', { unit: entry.unit, weight_bucket: valueBucket(entry.weight, 5) });
   };
   const deleteWeight = id => {
     const next = weights.filter(w => w.id !== id);
-    saveWeights(next); setWeights(next);
+    persistWeights(next);
     trackEvent('weight_deleted', { from_view: view });
   };
   const setGoalWeight = g => {
