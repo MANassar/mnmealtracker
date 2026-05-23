@@ -760,14 +760,6 @@ function WeightView({ weights, settings, onAddWeight, onDeleteWeight, onSetGoal,
                       <span style="font-size:14px;color:var(--muted)">${unit}</span>
                     </div>`
                   : html`<div style="font-family:'DM Mono',monospace;font-size:36px;font-weight:700;color:var(--muted)">— <span style="font-size:14px">${unit}</span></div>`}
-                ${goalWeight != null ? html`
-                  <div style="font-size:11px;color:var(--muted);margin-top:4px">
-                    Goal: <span style="color:var(--accent)">${goalWeight.toFixed(1)} ${unit}</span>
-                    ${todayWeight && goalWeight ? html`
-                      <span style="margin-left:6px;color:${todayWeight.weight <= goalWeight ? 'var(--mint)' : 'var(--muted)'}">
-                        (${todayWeight.weight <= goalWeight ? '✓ at goal' : `${(todayWeight.weight - goalWeight).toFixed(1)} ${unit} to go`})
-                      </span>` : null}
-                  </div>` : null}
               </div>
               <button onClick=${() => { setInputOpen(!inputOpen); setInputErr(''); }}
                 style="background:var(--mint);border:none;color:#0c1a10;border-radius:12px;
@@ -776,6 +768,14 @@ function WeightView({ weights, settings, onAddWeight, onDeleteWeight, onSetGoal,
                 ${inputOpen ? 'Cancel' : 'Log Weight'}
               </button>
             </div>
+            ${goalWeight != null ? html`
+              <div style="font-size:11px;color:var(--muted);margin-top:4px">
+                Goal: <span style="color:var(--accent)">${goalWeight.toFixed(1)} ${unit}</span>
+                ${todayWeight && goalWeight ? html`
+                  <span style="margin-left:6px;color:${todayWeight.weight <= goalWeight ? 'var(--mint)' : 'var(--muted)'}">
+                    (${todayWeight.weight <= goalWeight ? '✓ at goal' : `${(todayWeight.weight - goalWeight).toFixed(1)} ${unit} to go`})
+                  </span>` : null}
+              </div>` : null}
 
             ${inputOpen ? html`
               <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
