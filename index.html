@@ -771,7 +771,8 @@ function WeightView({ weights, settings, onAddWeight, onDeleteWeight, onSetGoal,
               </div>
               <button onClick=${() => { setInputOpen(!inputOpen); setInputErr(''); }}
                 style="background:var(--mint);border:none;color:#0c1a10;border-radius:12px;
-                       padding:0 18px;height:42px;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0">
+                       padding:0 18px;height:42px;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;
+                       display:flex;align-items:center;justify-content:center">
                 ${inputOpen ? 'Cancel' : 'Log Weight'}
               </button>
             </div>
