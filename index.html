@@ -1393,9 +1393,8 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
 }
 
 /* ── Today View ─────────────────────────────────────────── */
-function TodayView({ meals, targets, onDelete, onEdit, onSettings, onFeedback }) {
+function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
   // Today is derived from the full meal list each render, keeping storage simple.
-  const [showFeedbackButton, setShowFeedbackButton] = useState(true);
   const today   = meals.filter(m => m.date === todayStr());
   const cal     = sum(today, 'calories'), protein = sum(today, 'protein');
   const carbs   = sum(today, 'carbs'),    fat     = sum(today, 'fat');
@@ -1439,20 +1438,6 @@ function TodayView({ meals, targets, onDelete, onEdit, onSettings, onFeedback })
             </div>` : null}
         </div>
       </div>
-      ${showFeedbackButton ? html`
-        <div style="position:fixed;right:14px;bottom:calc(var(--tab-h) + var(--sab) + 14px);z-index:25;display:flex;align-items:center;gap:6px">
-          <button aria-label="Send feedback" onClick=${() => onFeedback('home_floating')}
-            style="width:52px;height:52px;background:var(--accent);border:1px solid rgba(0,0,0,.08);border-radius:999px;color:#0c1a10;font-size:24px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 12px 28px rgba(0,0,0,.28)">
-            ?
-          </button>
-          <button aria-label="Dismiss feedback button" onClick=${() => {
-              trackEvent('feedback_button_dismissed', { source: 'home_floating', installed: isStandaloneApp() });
-              setShowFeedbackButton(false);
-            }}
-            style="background:var(--card);border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:18px;line-height:1;min-width:34px;min-height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 22px rgba(0,0,0,.22)">
-            ×
-          </button>
-        </div>` : null}
     </div>`;
 }
 
@@ -2140,7 +2125,6 @@ function App() {
 
   const NAV = [
     { key: 'today',   icon: '◉', label: 'Home'    },
-    { key: 'add',     icon: '+', label: 'Add'      },
     { key: 'history', icon: '≡', label: 'History'  },
     { key: 'weight',  icon: '⚖', label: 'Weight'  },
   ];
@@ -2161,25 +2145,32 @@ function App() {
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} weights=${weights} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onLogAgain=${logMealAgain} onDeleteWeight=${deleteWeight} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
           view === 'weight'   ? html`<${WeightView} weights=${weights} settings=${settings} onAddWeight=${addWeight} onDeleteWeight=${deleteWeight} onSetGoal=${setGoalWeight} onSettings=${() => setView('settings')}/>` :
-                                html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')} onFeedback=${openFeedback}/>`}
+                                html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 
       ${view !== 'add' && view !== 'settings' ? html`
+        <button aria-label="Add meal" onClick=${() => { setEditingMeal(null); setRepeatMeal(null); setView('add'); }}
+          style="position:fixed;right:16px;bottom:calc(var(--tab-h) + var(--sab) + 16px);z-index:25;
+                 width:56px;height:56px;background:${navAccent};border:none;border-radius:999px;
+                 color:#0c1a10;font-size:30px;font-weight:700;cursor:pointer;
+                 display:flex;align-items:center;justify-content:center;
+                 box-shadow:0 6px 20px rgba(0,0,0,.3);transition:transform .15s ease">
+          +
+        </button>
         <div class="tabbar">
           ${NAV.map(item => {
-            const isAdd  = item.key === 'add';
             const active = view === item.key;
             return html`
               <button key=${item.key} onClick=${() => { setEditingMeal(null); setRepeatMeal(null); setView(item.key); }}
-                style="flex:1;height:var(--tab-h);padding:${isAdd ? '8px 0 14px' : '12px 0 14px'};
-                       background:${isAdd ? navAccent : active ? 'rgba(201,168,76,.12)' : 'none'};
+                style="flex:1;height:var(--tab-h);padding:12px 0 14px;
+                       background:${active ? 'rgba(201,168,76,.12)' : 'none'};
                        border:none;cursor:pointer;
                        display:flex;flex-direction:column;align-items:center;gap:4px;
-                       color:${isAdd ? '#0c1a10' : active ? navAccent : 'var(--muted)'};
+                       color:${active ? navAccent : 'var(--muted)'};
                        transition:color .2s, background .2s;min-height:var(--tab-h);position:relative;z-index:1">
-                <span style="font-size:${isAdd ? '25px' : '17px'};line-height:1">${item.icon}</span>
-                <span style="font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:${active || isAdd ? 700 : 500}">${item.label}</span>
-                ${active && !isAdd ? html`<span style="width:18px;height:2px;background:${navAccent};border-radius:2px;margin-top:1px"></span>` : null}
+                <span style="font-size:17px;line-height:1">${item.icon}</span>
+                <span style="font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:${active ? 700 : 500}">${item.label}</span>
+                ${active ? html`<span style="width:18px;height:2px;background:${navAccent};border-radius:2px;margin-top:1px"></span>` : null}
               </button>`;
           })}
         </div>` : null}
