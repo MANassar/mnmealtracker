@@ -169,6 +169,7 @@ const MEALS_SNAP_KEY   = 'mt_meals_snapshots_v1';
 const DELETED_MEALS_KEY = 'mt_deleted_meals_v1';
 const WEIGHTS_KEY  = 'mt_weights_v1';
 const SETT_KEY    = 'mt_settings_v1';
+const ANALYTICS_USER_KEY = 'mt_anon_id';
 const APP_VERSION = window.APP_VERSION || '0.1.1';
 const DEFAULT_TARGETS = { calories: 1800, protein: 150, carbs: 180, fat: 60 };
 const FEEDBACK_FORM_URL = 'https://bit.ly/4dAU3UV';
@@ -181,6 +182,21 @@ const safeAnalyticsProps = props => Object.fromEntries(
     value === null || ['string', 'number', 'boolean'].includes(typeof value)
   )
 );
+const randomId = () =>
+  crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+const getAnalyticsUserId = () => {
+  try {
+    let id = localStorage.getItem(ANALYTICS_USER_KEY);
+    if (!id) {
+      id = `anon-${randomId()}`;
+      localStorage.setItem(ANALYTICS_USER_KEY, id);
+    }
+    return id;
+  } catch {
+    return `anon-session-${randomId()}`;
+  }
+};
+const ANALYTICS_USER_ID = getAnalyticsUserId();
 const initAnalytics = () => {
   // PostHog is opt-in by configuration; no script loads until a key is present.
   const apiKey = String(analyticsConfig.apiKey || '').trim();
@@ -202,14 +218,7 @@ const initAnalytics = () => {
       person_profiles: 'always',
     });
     // Identify with a stable anonymous ID so PostHog counts this device as a person.
-    try {
-      let anonId = localStorage.getItem('mt_anon_id');
-      if (!anonId) {
-        anonId = 'anon-' + crypto.randomUUID();
-        localStorage.setItem('mt_anon_id', anonId);
-      }
-      window.posthog?.identify?.(anonId);
-    } catch {}
+    try { window.posthog?.identify?.(ANALYTICS_USER_ID); } catch {}
     trackEvent('app_loaded', { version: APP_VERSION, installed: isStandaloneApp() });
     trackPageview('app_loaded', { view: 'today' });
   };
@@ -218,7 +227,7 @@ const initAnalytics = () => {
 };
 const trackEvent = (name, props = {}) => {
   // Analytics events must never include meal descriptions, ingredients, photos, or keys.
-  try { window.posthog?.capture?.(name, safeAnalyticsProps({ version: APP_VERSION, ...props })); } catch {}
+  try { window.posthog?.capture?.(name, safeAnalyticsProps({ version: APP_VERSION, user_id: ANALYTICS_USER_ID, ...props })); } catch {}
 };
 const trackPageview = (source, props = {}) => {
   trackEvent('$pageview', {
