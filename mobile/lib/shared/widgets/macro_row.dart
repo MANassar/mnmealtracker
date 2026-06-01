@@ -37,16 +37,11 @@ class MacroRow extends StatelessWidget {
             color: c.accent),
         const SizedBox(width: 8),
         _MacroChip(
-            value: protein,
-            goal: goalProtein,
-            label: 'P',
-            color: c.mint),
+            value: protein, goal: goalProtein, label: 'P', color: c.mint),
         const SizedBox(width: 8),
-        _MacroChip(
-            value: carbs, goal: goalCarbs, label: 'C', color: c.sky),
+        _MacroChip(value: carbs, goal: goalCarbs, label: 'C', color: c.sky),
         const SizedBox(width: 8),
-        _MacroChip(
-            value: fat, goal: goalFat, label: 'F', color: c.peach),
+        _MacroChip(value: fat, goal: goalFat, label: 'F', color: c.peach),
         const SizedBox(width: 8),
         _MacroChip(value: fiber, label: 'Fi', color: c.plum),
       ],
@@ -70,10 +65,10 @@ class _MacroChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.appColors;
-    final display = value >= 10
-        ? value.toInt().toString()
-        : value.toStringAsFixed(1);
-    final overGoal = goal != null && value > goal! * 1.1;
+    final display =
+        value >= 10 ? value.toInt().toString() : value.toStringAsFixed(1);
+    final overGoal = goal != null && goal! > 0 && value > goal!;
+    final activeColor = overGoal ? c.danger : color;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -82,7 +77,7 @@ class _MacroChip extends StatelessWidget {
           label,
           style: TextStyle(
             fontSize: 10,
-            color: c.muted,
+            color: overGoal ? c.danger : c.muted,
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -91,7 +86,7 @@ class _MacroChip extends StatelessWidget {
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: overGoal ? c.danger : color,
+            color: activeColor,
           ),
         ),
       ],

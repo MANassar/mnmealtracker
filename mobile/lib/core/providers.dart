@@ -10,8 +10,7 @@ import 'services/ai/ai_service.dart';
 
 // ── Settings ───────────────────────────────────────────────────────────────
 
-final settingsRepositoryProvider =
-    Provider((_) => SettingsRepository());
+final settingsRepositoryProvider = Provider((_) => SettingsRepository());
 
 final settingsProvider =
     StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
@@ -38,17 +37,21 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
 // ── Meals ──────────────────────────────────────────────────────────────────
 
-final mealsProvider =
-    StateNotifierProvider<MealsNotifier, List<Meal>>((_) => MealsNotifier());
+final mealsProvider = StateNotifierProvider<MealsNotifier, List<Meal>>(
+    (ref) => MealsNotifier(ref));
 
 class MealsNotifier extends StateNotifier<List<Meal>> {
-  MealsNotifier() : super([]) {
+  final Ref _ref;
+
+  MealsNotifier(this._ref) : super([]) {
     _load();
   }
 
   Future<void> _load() async {
     state = await IsarRepository.instance.getAllMeals();
   }
+
+  Future<void> refresh() => _load();
 
   Future<void> save(Meal meal) async {
     await IsarRepository.instance.saveMeal(meal);
@@ -67,7 +70,8 @@ class MealsNotifier extends StateNotifier<List<Meal>> {
 
   Future<ImportResult> importJson(Map<String, dynamic> json) async {
     final result = await IsarRepository.instance.importFromJson(json);
-    state = await IsarRepository.instance.getAllMeals();
+    await refresh();
+    await _ref.read(weightsProvider.notifier).refresh();
     return result;
   }
 }
@@ -86,6 +90,8 @@ class WeightsNotifier extends StateNotifier<List<WeightEntry>> {
   Future<void> _load() async {
     state = await IsarRepository.instance.getAllWeights();
   }
+
+  Future<void> refresh() => _load();
 
   Future<void> save(WeightEntry entry) async {
     await IsarRepository.instance.saveWeight(entry);

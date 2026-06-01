@@ -14,6 +14,7 @@ import '../../core/models/meal.dart';
 import '../../core/providers.dart';
 import '../../core/services/ai/meal_analysis.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/widgets/pwa_chrome.dart';
 
 enum _Status { idle, analyzing, review, optimizing }
 
@@ -47,14 +48,17 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
   String? _error;
   MealAnalysis? _analysis;
   MealOptimization? _optimization;
+  late String _mealDate;
 
   bool get _isEditing => widget.editingMeal != null;
 
   @override
   void initState() {
     super.initState();
+    _mealDate = _todayStr();
     final source = widget.editingMeal ?? widget.repeatMeal;
     if (source != null) {
+      _mealDate = widget.editingMeal != null ? source.date : _todayStr();
       _nameCtrl.text = source.mealName;
       _calCtrl.text = _fmt(source.calories);
       _protCtrl.text = _fmt(source.protein);
@@ -66,19 +70,16 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
         final f = File(source.imagePath!);
         if (f.existsSync()) _imageFile = f;
       }
-      // Pre-fill analysis from the source meal so edit shows review state
-      if (widget.editingMeal != null) {
-        _analysis = MealAnalysis(
-          mealName: source.mealName,
-          calories: source.calories,
-          protein: source.protein,
-          carbs: source.carbs,
-          fat: source.fat,
-          fiber: source.fiber,
-          portionNote: source.portionNote,
-        );
-        _status = _Status.review;
-      }
+      _analysis = MealAnalysis(
+        mealName: source.mealName,
+        calories: source.calories,
+        protein: source.protein,
+        carbs: source.carbs,
+        fat: source.fat,
+        fiber: source.fiber,
+        portionNote: source.portionNote,
+      );
+      _status = _Status.review;
     }
   }
 
@@ -120,7 +121,8 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
     );
 
     setState(() {
-      _imageFile = compressed != null ? File(compressed.path) : File(picked.path);
+      _imageFile =
+          compressed != null ? File(compressed.path) : File(picked.path);
       _status = _Status.idle;
       _analysis = null;
       _optimization = null;
@@ -157,6 +159,8 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
   }
 
   Future<void> _analyze() async {
+    FocusScope.of(context).unfocus();
+
     if (_imageFile == null && _descCtrl.text.trim().isEmpty) {
       setState(() => _error = 'Add a photo or description first.');
       return;
@@ -183,7 +187,7 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
       });
     } catch (e) {
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = _friendlyError(e);
         _status = _Status.idle;
       });
     }
@@ -211,10 +215,19 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
       });
     } catch (e) {
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = _friendlyError(e);
         _status = _Status.review;
       });
     }
+  }
+
+  String _friendlyError(Object error) {
+    return error
+        .toString()
+        .replaceFirst('Exception: ', '')
+        .split('Source stack:')
+        .first
+        .trim();
   }
 
   void _applyAnalysis(MealAnalysis a) {
@@ -224,6 +237,73 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
     _carbCtrl.text = _fmt(a.carbs);
     _fatCtrl.text = _fmt(a.fat);
     _fibCtrl.text = _fmt(a.fiber);
+  }
+
+  void _applyPreviousMeal(Meal meal) {
+    FocusScope.of(context).unfocus();
+
+    final imagePath = meal.imagePath;
+    final imageFile = imagePath == null ? null : File(imagePath);
+    setState(() {
+      _mealDate = _todayStr();
+      _nameCtrl.text = meal.mealName;
+      _calCtrl.text = _fmt(meal.calories);
+      _protCtrl.text = _fmt(meal.protein);
+      _carbCtrl.text = _fmt(meal.carbs);
+      _fatCtrl.text = _fmt(meal.fat);
+      _fibCtrl.text = _fmt(meal.fiber);
+      _descCtrl.text = meal.description ?? '';
+      _imageFile =
+          imageFile != null && imageFile.existsSync() ? imageFile : null;
+      _analysis = MealAnalysis(
+        mealName: meal.mealName,
+        calories: meal.calories,
+        protein: meal.protein,
+        carbs: meal.carbs,
+        fat: meal.fat,
+        fiber: meal.fiber,
+        ingredients: _ingredientsFromJson(meal.ingredients),
+        confidence: meal.confidence,
+        portionNote: meal.portionNote,
+      );
+      _optimization = null;
+      _error = null;
+      _status = _Status.review;
+    });
+  }
+
+  List<String> _ingredientsFromJson(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return const [];
+    try {
+      final parsed = jsonDecode(raw);
+      if (parsed is! List) return const [];
+      return parsed.map((item) => item.toString()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  List<Meal> _previousMeals(List<Meal> meals) {
+    final sorted = [...meals]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final seen = <String>{};
+    final previous = <Meal>[];
+
+    for (final meal in sorted) {
+      final key = [
+        meal.mealName.trim().toLowerCase(),
+        meal.calories.toStringAsFixed(1),
+        meal.protein.toStringAsFixed(1),
+        meal.carbs.toStringAsFixed(1),
+        meal.fat.toStringAsFixed(1),
+        meal.fiber.toStringAsFixed(1),
+      ].join('|');
+      if (!seen.add(key)) continue;
+      previous.add(meal);
+      if (previous.length == 6) break;
+    }
+
+    return previous;
   }
 
   Future<void> _save() async {
@@ -243,8 +323,7 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
     String? savedImagePath;
     if (_imageFile != null) {
       final dir = await getApplicationDocumentsDirectory();
-      final dest =
-          '${dir.path}/meal_photos/${const Uuid().v4()}.jpg';
+      final dest = '${dir.path}/meal_photos/${const Uuid().v4()}.jpg';
       await Directory('${dir.path}/meal_photos').create(recursive: true);
       if (_isEditing &&
           widget.editingMeal!.imagePath != null &&
@@ -257,11 +336,12 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
 
     final settings = ref.read(settingsProvider);
     final meal = widget.editingMeal ?? Meal();
+    final uuid = widget.editingMeal?.uuid ?? const Uuid().v4();
     meal
-      ..uuid = meal.uuid.isEmpty ? const Uuid().v4() : meal.uuid
-      ..date = _todayStr()
-      ..timestamp = widget.editingMeal?.timestamp ??
-          DateTime.now().millisecondsSinceEpoch
+      ..uuid = uuid.isEmpty ? const Uuid().v4() : uuid
+      ..date = _mealDate
+      ..timestamp =
+          widget.editingMeal?.timestamp ?? DateTime.now().millisecondsSinceEpoch
       ..mealName = name
       ..calories = cal
       ..protein = prot
@@ -269,9 +349,8 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
       ..fat = fat
       ..fiber = fib
       ..provider = settings.provider
-      ..description = _descCtrl.text.trim().isEmpty
-          ? null
-          : _descCtrl.text.trim()
+      ..description =
+          _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim()
       ..portionNote = _analysis?.portionNote
       ..confidence = _analysis?.confidence
       ..ingredients = _analysis?.ingredients.isNotEmpty == true
@@ -287,150 +366,199 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.appColors;
-    final isLoading = _status == _Status.analyzing || _status == _Status.optimizing;
-    final title = _isEditing
-        ? 'Edit meal'
-        : widget.repeatMeal != null
-            ? 'Log again'
-            : 'Log meal';
+    final isLoading =
+        _status == _Status.analyzing || _status == _Status.optimizing;
+    final title = _isEditing ? 'Edit Meal' : 'Add Meal';
+    final previousMeals = _previousMeals(ref.watch(mealsProvider));
 
     return Scaffold(
       backgroundColor: c.bg,
-      appBar: AppBar(
-        backgroundColor: c.surface,
-        title: Text(title, style: TextStyle(color: c.text)),
-        leading: IconButton(
-          icon: Icon(Icons.close, color: c.muted),
-          onPressed: () => context.go(widget.returnPath),
-        ),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Photo picker
-            GestureDetector(
-              onTap: _showImagePicker,
-              child: Container(
-                height: _imageFile != null ? 200 : 100,
-                decoration: BoxDecoration(
-                  color: c.card,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: c.border),
-                ),
-                child: _imageFile != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: Image.file(
-                          _imageFile!,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
+      body: Column(
+        children: [
+          PwaTopBar(
+            title: title,
+            showBorder: true,
+            leading: IconButton(
+              icon: Icon(Icons.arrow_back, color: c.muted),
+              onPressed: () => context.go(widget.returnPath),
+              style: IconButton.styleFrom(
+                minimumSize: const Size(44, 44),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            trailing:
+                _ProviderPill(provider: ref.watch(settingsProvider).provider),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  GestureDetector(
+                    onTap: _showImagePicker,
+                    child: Container(
+                      height: _imageFile != null ? 220 : 160,
+                      decoration: BoxDecoration(
+                        color: c.card,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _imageFile != null ? c.border : c.muted,
+                          width: _imageFile != null ? 1 : 2,
                         ),
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.camera_alt_outlined,
-                              color: c.muted, size: 28),
-                          const SizedBox(height: 6),
-                          Text('Tap to add photo',
-                              style: TextStyle(color: c.muted, fontSize: 13)),
-                        ],
                       ),
+                      child: _imageFile != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: Image.file(
+                                _imageFile!,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: 240,
+                              ),
+                            )
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.camera_alt_outlined,
+                                    color: c.muted, size: 42),
+                                const SizedBox(height: 8),
+                                Text('Add a photo',
+                                    style: TextStyle(
+                                        color: c.muted,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500)),
+                                const SizedBox(height: 3),
+                                Text('optional if you describe the meal',
+                                    style: TextStyle(
+                                        color: c.muted, fontSize: 12)),
+                              ],
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _descCtrl,
+                    decoration: InputDecoration(
+                      hintText:
+                          'Describe the meal, portions, ingredients, or restaurant…',
+                      filled: true,
+                      fillColor: c.card,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: c.border),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: c.border),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: c.border),
+                      ),
+                    ),
+                    maxLines: 3,
+                    textInputAction: TextInputAction.done,
+                  ),
+                  if (!_isEditing &&
+                      _status == _Status.idle &&
+                      previousMeals.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    _PreviousMealsPanel(
+                      meals: previousMeals,
+                      onSelect: _applyPreviousMeal,
+                    ),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: c.danger.withValues(alpha: 0.12),
+                        border: Border.all(color: c.danger),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(_error!,
+                          style: TextStyle(color: c.danger, fontSize: 13)),
+                    ),
+                  ],
+                  if (_status == _Status.review && _analysis != null) ...[
+                    const SizedBox(height: 12),
+                    _AnalysisEditor(
+                      analysis: _analysis!,
+                      nameCtrl: _nameCtrl,
+                      calCtrl: _calCtrl,
+                      protCtrl: _protCtrl,
+                      carbCtrl: _carbCtrl,
+                      fatCtrl: _fatCtrl,
+                      fibCtrl: _fibCtrl,
+                      provider: ref.watch(settingsProvider).provider,
+                    ),
+                    if (!_isEditing) ...[
+                      const SizedBox(height: 12),
+                      _OptimizationPanel(
+                        optimization: _optimization,
+                        isOptimizing: _status == _Status.optimizing,
+                        onOptimize: _optimize,
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    _MealDateEditor(
+                      date: _mealDate,
+                      onChanged: (value) => setState(() => _mealDate = value),
+                    )
+                  ],
+                  const SizedBox(height: 40),
+                ],
               ),
             ),
-
-            const SizedBox(height: 12),
-
-            // Description
-            TextField(
-              controller: _descCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Description (optional)',
-                hintText: 'e.g. grilled chicken salad, large portion',
-              ),
-              maxLines: 2,
-              textInputAction: TextInputAction.done,
+          ),
+          Container(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              10,
+              16,
+              MediaQuery.of(context).padding.bottom + 10,
             ),
-
-            const SizedBox(height: 12),
-
-            // Analyze button
-            if (_status != _Status.review)
-              ElevatedButton.icon(
-                onPressed: isLoading ? null : _analyze,
-                icon: isLoading
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.auto_awesome),
-                label: Text(isLoading ? 'Analyzing…' : 'Analyze with AI'),
-              ),
-
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(_error!,
-                  style: TextStyle(color: c.danger, fontSize: 13)),
-            ],
-
-            const SizedBox(height: 20),
-
-            // Nutrition fields
-            Text('Nutrition',
-                style: TextStyle(
-                    color: c.text,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15)),
-            const SizedBox(height: 10),
-
-            _NutritionField(
-                ctrl: _nameCtrl, label: 'Meal name', isText: true),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(
-                  child: _NutritionField(
-                      ctrl: _calCtrl, label: 'Calories (kcal)')),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: _NutritionField(
-                      ctrl: _protCtrl, label: 'Protein (g)')),
-            ]),
-            const SizedBox(height: 8),
-            Row(children: [
-              Expanded(
-                  child: _NutritionField(ctrl: _carbCtrl, label: 'Carbs (g)')),
-              const SizedBox(width: 8),
-              Expanded(
-                  child: _NutritionField(ctrl: _fatCtrl, label: 'Fat (g)')),
-            ]),
-            const SizedBox(height: 8),
-            _NutritionField(ctrl: _fibCtrl, label: 'Fiber (g)'),
-
-            // Analysis review panel
-            if (_status == _Status.review && _analysis != null) ...[
-              const SizedBox(height: 20),
-              _ReviewPanel(
-                analysis: _analysis!,
-                optimization: _optimization,
-                onOptimize: _status == _Status.optimizing ? null : _optimize,
-                isOptimizing: _status == _Status.optimizing,
-              ),
-            ],
-
-            const SizedBox(height: 24),
-
-            ElevatedButton(
-              onPressed: isLoading ? null : _save,
-              child: Text(_isEditing ? 'Save changes' : 'Log meal'),
+            decoration: BoxDecoration(
+              color: c.bg,
+              border: Border(top: BorderSide(color: c.border)),
             ),
-
-            const SizedBox(height: 40),
-          ],
-        ),
+            child: _status == _Status.review
+                ? Row(
+                    children: [
+                      Expanded(
+                        child: PwaButton(
+                          onPressed: isLoading ? null : _analyze,
+                          color: c.muted,
+                          filled: false,
+                          height: 54,
+                          label: 'Re-analyze',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: PwaButton(
+                          onPressed: isLoading ? null : _save,
+                          color: c.accent,
+                          height: 54,
+                          label: _isEditing ? 'Save Meal ✓' : 'Log Meal ✓',
+                        ),
+                      ),
+                    ],
+                  )
+                : SizedBox(
+                    width: double.infinity,
+                    child: PwaButton(
+                      onPressed: isLoading ? null : _analyze,
+                      color: c.accent,
+                      height: 54,
+                      label: isLoading ? 'Analyzing…' : 'Analyze Meal',
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -441,47 +569,307 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
   }
 }
 
-class _NutritionField extends StatelessWidget {
-  final TextEditingController ctrl;
-  final String label;
-  final bool isText;
+class _AnalysisEditor extends StatelessWidget {
+  final MealAnalysis analysis;
+  final TextEditingController nameCtrl;
+  final TextEditingController calCtrl;
+  final TextEditingController protCtrl;
+  final TextEditingController carbCtrl;
+  final TextEditingController fatCtrl;
+  final TextEditingController fibCtrl;
+  final String? provider;
 
-  const _NutritionField({
-    required this.ctrl,
+  const _AnalysisEditor({
+    required this.analysis,
+    required this.nameCtrl,
+    required this.calCtrl,
+    required this.protCtrl,
+    required this.carbCtrl,
+    required this.fatCtrl,
+    required this.fibCtrl,
+    required this.provider,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    final pc = providerColor(context, provider);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pc.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: nameCtrl,
+            style: TextStyle(
+              color: c.text,
+              fontFamily: 'Playfair Display',
+              fontSize: 18,
+            ),
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              isDense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: c.surface,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Text('Calories',
+                    style: TextStyle(color: c.muted, fontSize: 12)),
+                const Spacer(),
+                SizedBox(
+                  width: 72,
+                  child:
+                      _BareNumberField(ctrl: calCtrl, color: pc, fontSize: 22),
+                ),
+                const SizedBox(width: 8),
+                Text('kcal', style: TextStyle(color: c.muted, fontSize: 12)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _NutritionTile(label: 'Protein', ctrl: protCtrl, color: c.mint),
+              const SizedBox(width: 8),
+              _NutritionTile(label: 'Carbs', ctrl: carbCtrl, color: c.sky),
+              const SizedBox(width: 8),
+              _NutritionTile(label: 'Fat', ctrl: fatCtrl, color: c.peach),
+              const SizedBox(width: 8),
+              _NutritionTile(label: 'Fiber', ctrl: fibCtrl, color: c.plum),
+            ],
+          ),
+          if (analysis.portionNote != null &&
+              analysis.portionNote!.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: pc.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(8),
+                border: Border(left: BorderSide(color: pc, width: 2)),
+              ),
+              child: Text(
+                analysis.portionNote!,
+                style: TextStyle(
+                  color: c.muted,
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviousMealsPanel extends StatelessWidget {
+  final List<Meal> meals;
+  final ValueChanged<Meal> onSelect;
+
+  const _PreviousMealsPanel({
+    required this.meals,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'PREVIOUS MEALS',
+            style: TextStyle(
+              color: c.muted,
+              fontSize: 10,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...meals.map(
+            (meal) => _PreviousMealTile(
+              meal: meal,
+              onTap: () => onSelect(meal),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviousMealTile extends StatelessWidget {
+  final Meal meal;
+  final VoidCallback onTap;
+
+  const _PreviousMealTile({
+    required this.meal,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    final pc = providerColor(context, meal.provider);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    meal.mealName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${meal.calories.round()} kcal  ·  '
+                    '${meal.protein.toStringAsFixed(0)}P '
+                    '${meal.carbs.toStringAsFixed(0)}C '
+                    '${meal.fat.toStringAsFixed(0)}F',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.muted,
+                      fontSize: 11,
+                      fontFamily: 'DM Mono',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(Icons.add_circle_outline, color: pc, size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NutritionTile extends StatelessWidget {
+  final String label;
+  final TextEditingController ctrl;
+  final Color color;
+
+  const _NutritionTile({
     required this.label,
-    this.isText = false,
+    required this.ctrl,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          children: [
+            _BareNumberField(ctrl: ctrl, color: color, fontSize: 16),
+            const SizedBox(height: 5),
+            Text(
+              label.toUpperCase(),
+              style: TextStyle(
+                color: c.muted,
+                fontSize: 9,
+                letterSpacing: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BareNumberField extends StatelessWidget {
+  final TextEditingController ctrl;
+  final Color color;
+  final double fontSize;
+
+  const _BareNumberField({
+    required this.ctrl,
+    required this.color,
+    required this.fontSize,
   });
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: ctrl,
-      decoration: InputDecoration(labelText: label),
-      keyboardType: isText ? TextInputType.text : TextInputType.number,
-      inputFormatters: isText
-          ? []
-          : [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+      textAlign: TextAlign.center,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+      style: TextStyle(
+        color: color,
+        fontSize: fontSize,
+        fontFamily: 'DM Mono',
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(vertical: 2),
+        enabledBorder:
+            UnderlineInputBorder(borderSide: BorderSide(color: color)),
+        focusedBorder:
+            UnderlineInputBorder(borderSide: BorderSide(color: color)),
+      ),
     );
   }
 }
 
-class _ReviewPanel extends StatelessWidget {
-  final MealAnalysis analysis;
+class _OptimizationPanel extends StatelessWidget {
   final MealOptimization? optimization;
-  final VoidCallback? onOptimize;
   final bool isOptimizing;
+  final VoidCallback onOptimize;
 
-  const _ReviewPanel({
-    required this.analysis,
-    this.optimization,
-    this.onOptimize,
-    this.isOptimizing = false,
+  const _OptimizationPanel({
+    required this.optimization,
+    required this.isOptimizing,
+    required this.onOptimize,
   });
 
   @override
   Widget build(BuildContext context) {
     final c = context.appColors;
-
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -490,118 +878,105 @@ class _ReviewPanel extends StatelessWidget {
         border: Border.all(color: c.border),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(children: [
-            Icon(Icons.auto_awesome, size: 16, color: c.accent),
-            const SizedBox(width: 6),
-            Text('AI Analysis',
-                style: TextStyle(
-                    color: c.text, fontWeight: FontWeight.w600)),
-            const Spacer(),
-            if (analysis.confidence != null)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _confidenceColor(context, analysis.confidence!),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(analysis.confidence!,
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 11)),
-              ),
-          ]),
-
-          if (analysis.portionNote != null) ...[
-            const SizedBox(height: 8),
-            Text(analysis.portionNote!,
-                style: TextStyle(color: c.muted, fontSize: 13)),
-          ],
-
-          if (analysis.ingredients.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text('Ingredients detected:',
-                style: TextStyle(
-                    color: c.muted, fontSize: 12)),
-            const SizedBox(height: 4),
-            ...analysis.ingredients.map((i) => Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Text('• $i',
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'CALORIE OPTIMIZATION',
                       style: TextStyle(
-                          color: c.text, fontSize: 13)),
-                )),
-          ],
-
-          // Optimization result
-          if (optimization != null) ...[
-            const Divider(height: 20),
-            Row(children: [
-              Icon(Icons.eco, size: 16, color: c.mint),
-              const SizedBox(width: 6),
-              Text('Optimized version',
-                  style: TextStyle(
-                      color: c.text, fontWeight: FontWeight.w600)),
-              if (optimization!.calorieSavings != null) ...[
-                const Spacer(),
-                Text(
-                  '-${optimization!.calorieSavings!.toInt()} kcal',
-                  style: TextStyle(
-                      color: c.mint,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13),
-                ),
-              ],
-            ]),
-            if (optimization!.portionNote != null) ...[
-              const SizedBox(height: 6),
-              Text(optimization!.portionNote!,
-                  style: TextStyle(color: c.muted, fontSize: 13)),
-            ],
-            ...optimization!.suggestions
-                .take(4)
-                .map((s) => Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('→ ',
-                              style: TextStyle(color: c.mint)),
-                          Expanded(
-                            child: Text(s.text,
-                                style: TextStyle(
-                                    color: c.text, fontSize: 13)),
-                          ),
-                          if (s.caloriesDelta != null)
-                            Text(
-                              '${s.caloriesDelta! > 0 ? '+' : ''}${s.caloriesDelta!.toInt()}',
-                              style: TextStyle(
-                                  color: s.caloriesDelta! < 0
-                                      ? c.mint
-                                      : c.danger,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                        ],
+                        color: c.muted,
+                        fontSize: 10,
+                        letterSpacing: 1,
                       ),
-                    )),
-          ],
-
-          if (optimization == null) ...[
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Ask AI for a lower-calorie version before logging.',
+                      style:
+                          TextStyle(color: c.text, fontSize: 13, height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              PwaButton(
+                label: isOptimizing
+                    ? 'Optimizing…'
+                    : optimization == null
+                        ? 'Optimize'
+                        : 'Try Again',
+                onPressed: isOptimizing ? null : onOptimize,
+                color: c.oai,
+                filled: false,
+                height: 40,
+              ),
+            ],
+          ),
+          if (optimization != null) ...[
             const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: isOptimizing ? null : onOptimize,
-              icon: isOptimizing
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.eco, size: 16),
-              label: Text(
-                  isOptimizing ? 'Optimizing…' : 'Suggest lighter version'),
-              style: OutlinedButton.styleFrom(
-                primary: c.mint,
-                side: BorderSide(color: c.mint),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: c.oai.withValues(alpha: 0.18)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          optimization!.mealName,
+                          style: TextStyle(
+                            color: c.text,
+                            fontFamily: 'Playfair Display',
+                            fontSize: 17,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${optimization!.calories.round()} kcal',
+                        style: TextStyle(
+                          color: c.oai,
+                          fontFamily: 'DM Mono',
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (optimization!.calorieSavings != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '-${optimization!.calorieSavings!.round()} kcal estimated',
+                      style: TextStyle(
+                        color: c.mint,
+                        fontFamily: 'DM Mono',
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                  if (optimization!.portionNote != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      optimization!.portionNote!,
+                      style: TextStyle(
+                        color: c.muted,
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
@@ -609,11 +984,97 @@ class _ReviewPanel extends StatelessWidget {
       ),
     );
   }
+}
 
-  Color _confidenceColor(BuildContext context, String confidence) {
+class _MealDateEditor extends StatelessWidget {
+  final String date;
+  final ValueChanged<String> onChanged;
+
+  const _MealDateEditor({
+    required this.date,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.appColors;
-    if (confidence == 'high') return c.mint;
-    if (confidence == 'low') return c.danger;
-    return c.sky;
+    return GestureDetector(
+      onTap: () async {
+        final current = DateTime.tryParse('${date}T12:00:00') ?? DateTime.now();
+        final picked = await showDatePicker(
+          context: context,
+          initialDate: current,
+          firstDate: DateTime(2020),
+          lastDate: DateTime.now().add(const Duration(days: 365)),
+        );
+        if (picked == null) return;
+        onChanged(
+          '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}',
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'MEAL DATE',
+              style: TextStyle(color: c.muted, fontSize: 10, letterSpacing: 1),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 13),
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: c.border),
+              ),
+              child: Text(
+                date,
+                style: TextStyle(
+                  color: c.text,
+                  fontSize: 16,
+                  fontFamily: 'DM Mono',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProviderPill extends StatelessWidget {
+  final String? provider;
+
+  const _ProviderPill({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final pc = providerColor(context, provider);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: providerBg(context, provider),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: pc),
+      ),
+      child: Text(
+        providerLabel(provider).toUpperCase(),
+        style: TextStyle(
+          color: pc,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.6,
+        ),
+      ),
+    );
   }
 }

@@ -38,12 +38,10 @@ class AppTheme {
         brightness: Brightness.dark,
         scaffoldBackgroundColor: AppColors.darkBg,
         colorScheme: const ColorScheme.dark(
-          background: AppColors.darkBg,
           surface: AppColors.darkSurface,
           primary: AppColors.accent,
           secondary: AppColors.mint,
           error: AppColors.danger,
-          onBackground: AppColors.darkText,
           onSurface: AppColors.darkText,
           onPrimary: AppColors.darkBg,
         ),
@@ -82,9 +80,10 @@ class AppTheme {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            primary: AppColors.accent,
-            onPrimary: AppColors.darkBg,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            backgroundColor: AppColors.accent,
+            foregroundColor: AppColors.darkBg,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         ),
         extensions: const [AppColorsExtension.dark()],
@@ -94,12 +93,10 @@ class AppTheme {
         brightness: Brightness.light,
         scaffoldBackgroundColor: AppColors.lightBg,
         colorScheme: const ColorScheme.light(
-          background: AppColors.lightBg,
           surface: AppColors.lightSurface,
           primary: AppColors.accentLight,
           secondary: AppColors.mintLight,
           error: AppColors.danger,
-          onBackground: AppColors.lightText,
           onSurface: AppColors.lightText,
           onPrimary: AppColors.lightBg,
         ),
@@ -138,9 +135,10 @@ class AppTheme {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            primary: AppColors.accentLight,
-            onPrimary: AppColors.lightBg,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            backgroundColor: AppColors.accentLight,
+            foregroundColor: AppColors.lightBg,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         ),
         extensions: const [AppColorsExtension.light()],
@@ -176,6 +174,7 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
   final Color peach;
   final Color plum;
   final Color danger;
+  final Color oai;
 
   const AppColorsExtension({
     required this.bg,
@@ -190,6 +189,7 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
     required this.peach,
     required this.plum,
     required this.danger,
+    required this.oai,
   });
 
   const AppColorsExtension.dark()
@@ -204,7 +204,8 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
         sky = AppColors.sky,
         peach = AppColors.peach,
         plum = AppColors.plum,
-        danger = AppColors.danger;
+        danger = AppColors.danger,
+        oai = AppColors.oai;
 
   const AppColorsExtension.light()
       : bg = AppColors.lightBg,
@@ -218,7 +219,8 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
         sky = AppColors.skyLight,
         peach = AppColors.peachLight,
         plum = AppColors.plumLight,
-        danger = AppColors.danger;
+        danger = AppColors.danger,
+        oai = AppColors.oai;
 
   @override
   AppColorsExtension copyWith({
@@ -234,6 +236,7 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
     Color? peach,
     Color? plum,
     Color? danger,
+    Color? oai,
   }) =>
       AppColorsExtension(
         bg: bg ?? this.bg,
@@ -248,6 +251,7 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
         peach: peach ?? this.peach,
         plum: plum ?? this.plum,
         danger: danger ?? this.danger,
+        oai: oai ?? this.oai,
       );
 
   @override
@@ -266,6 +270,7 @@ class AppColorsExtension extends ThemeExtension<AppColorsExtension> {
       peach: Color.lerp(peach, other.peach, t)!,
       plum: Color.lerp(plum, other.plum, t)!,
       danger: Color.lerp(danger, other.danger, t)!,
+      oai: Color.lerp(oai, other.oai, t)!,
     );
   }
 }

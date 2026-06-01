@@ -31,6 +31,12 @@ class MnMealTrackerApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Meal Tracker',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.noScaling,
+        ),
+        child: child ?? const SizedBox.shrink(),
+      ),
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       themeMode: themeMode,

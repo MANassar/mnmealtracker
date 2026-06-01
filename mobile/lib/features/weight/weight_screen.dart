@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../core/models/weight_entry.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/widgets/pwa_chrome.dart';
 
 class WeightScreen extends ConsumerStatefulWidget {
   const WeightScreen({super.key});
@@ -31,11 +32,9 @@ class _WeightScreenState extends ConsumerState<WeightScreen> {
 
   String _unit() => ref.read(settingsProvider).weightUnit;
 
-  double _toKg(double v) =>
-      _unit() == 'lbs' ? v * 0.45359237 : v;
+  double _toKg(double v) => _unit() == 'lbs' ? v * 0.45359237 : v;
 
-  double _fromKg(double kg) =>
-      _unit() == 'lbs' ? kg * 2.20462262 : kg;
+  double _fromKg(double kg) => _unit() == 'lbs' ? kg * 2.20462262 : kg;
 
   String _fmtWeight(double kg) {
     final v = _fromKg(kg);
@@ -80,210 +79,324 @@ class _WeightScreenState extends ConsumerState<WeightScreen> {
     // Sorted ascending for chart
     final sorted = [...weights]
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    final latest = weights.isNotEmpty ? weights.first : null;
+    final todayMatches = weights.where((w) => w.date == _todayStr()).toList();
+    final todayWeight = todayMatches.isEmpty ? null : todayMatches.first;
+    final chartEntries =
+        sorted.length > 30 ? sorted.sublist(sorted.length - 30) : sorted;
 
     return Scaffold(
       backgroundColor: c.bg,
-      appBar: AppBar(
-        backgroundColor: c.surface,
-        title: Text('Weight', style: TextStyle(color: c.text)),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.settings_outlined, color: c.muted),
-            onPressed: () => context.go('/settings'),
+      body: Column(
+        children: [
+          PwaTopBar(
+            title: 'Weight',
+            onSettings: () => context.push('/settings'),
           ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Summary card
-            Container(
+          Expanded(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: c.border),
-              ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+                    decoration: BoxDecoration(
+                      color: c.card,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: c.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'TREND · ${settings.weightUnit}',
+                          style: TextStyle(
+                            color: c.muted,
+                            fontSize: 10,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 120,
+                          child: chartEntries.length >= 2
+                              ? _WeightChart(
+                                  entries: chartEntries,
+                                  goalKg: goalKg,
+                                  fromKg: _fromKg,
+                                  color: c.mint,
+                                  goalColor: c.accent,
+                                )
+                              : Center(
+                                  child: Text(
+                                    'Log at least 2 entries to see your trend',
+                                    style: TextStyle(
+                                      color: c.muted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: c.card,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: c.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'TODAY',
+                          style: TextStyle(
+                            color: c.muted,
+                            fontSize: 10,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: Text.rich(
+                                TextSpan(
+                                  text: todayWeight != null
+                                      ? _fromKg(todayWeight.weight)
+                                          .toStringAsFixed(1)
+                                      : '—',
+                                  children: [
+                                    TextSpan(
+                                      text: ' ${settings.weightUnit}',
+                                      style: TextStyle(
+                                        color: c.muted,
+                                        fontSize: 14,
+                                        fontFamily: 'DM Sans',
+                                        fontWeight: FontWeight.w400,
+                                      ),
+                                    )
+                                  ],
+                                ),
+                                style: TextStyle(
+                                  color: todayWeight != null ? c.mint : c.muted,
+                                  fontFamily: 'DM Mono',
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 126,
+                              child: PwaButton(
+                                onPressed: () => setState(() {
+                                  _inputOpen = !_inputOpen;
+                                  _goalOpen = false;
+                                }),
+                                color: c.mint,
+                                height: 42,
+                                label: _inputOpen ? 'Cancel' : 'Log Weight',
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (goalKg != null) ...[
+                          const SizedBox(height: 4),
+                          Text.rich(
+                            TextSpan(
+                              text: 'Goal: ',
+                              children: [
+                                TextSpan(
+                                  text: _fmtWeight(goalKg),
+                                  style: TextStyle(color: c.accent),
+                                ),
+                                if (todayWeight != null)
+                                  TextSpan(
+                                    text:
+                                        ' (${_delta(todayWeight.weight, goalKg)})',
+                                    style: TextStyle(color: c.muted),
+                                  ),
+                              ],
+                            ),
+                            style: TextStyle(color: c.muted, fontSize: 11),
+                          ),
+                        ],
+                        if (_inputOpen)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                border:
+                                    Border(top: BorderSide(color: c.border)),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: Row(children: [
+                                  Expanded(
+                                    child: _WeightInput(
+                                      ctrl: _weightCtrl,
+                                      unit: settings.weightUnit,
+                                      color: c.mint,
+                                      onSubmitted: _logWeight,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  SizedBox(
+                                    width: 86,
+                                    child: PwaButton(
+                                      onPressed: _logWeight,
+                                      color: c.mint,
+                                      height: 46,
+                                      label: 'Save ✓',
+                                    ),
+                                  ),
+                                ]),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: c.card,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: c.border),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'GOAL WEIGHT',
+                                    style: TextStyle(
+                                      color: c.muted,
+                                      fontSize: 10,
+                                      letterSpacing: 1,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    goalKg != null
+                                        ? _fmtWeight(goalKg)
+                                        : 'Not set',
+                                    style: TextStyle(
+                                      color:
+                                          goalKg != null ? c.accent : c.muted,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(
+                              width: 94,
+                              child: PwaButton(
+                                onPressed: () => setState(() {
+                                  _goalOpen = !_goalOpen;
+                                  _inputOpen = false;
+                                  if (goalKg != null) {
+                                    _goalCtrl.text =
+                                        _fromKg(goalKg).toStringAsFixed(1);
+                                  }
+                                }),
+                                color: c.muted,
+                                filled: false,
+                                height: 34,
+                                label: _goalOpen
+                                    ? 'Cancel'
+                                    : goalKg != null
+                                        ? 'Edit'
+                                        : 'Set goal',
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_goalOpen)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                border:
+                                    Border(top: BorderSide(color: c.border)),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 10),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: _WeightInput(
+                                        ctrl: _goalCtrl,
+                                        unit: settings.weightUnit,
+                                        color: c.accent,
+                                        onSubmitted: _setGoal,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    SizedBox(
+                                      width: 86,
+                                      child: PwaButton(
+                                        onPressed: _setGoal,
+                                        color: c.accent,
+                                        height: 46,
+                                        label: 'Save ✓',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (weights.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'ALL ENTRIES',
+                      style: TextStyle(
+                        color: c.muted,
+                        fontSize: 10,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...weights.map((e) => _WeightEntryTile(
+                          entry: e,
+                          displayWeight: _fmtWeight(e.weight),
+                          onDelete: () => _confirmDelete(context, ref, e),
+                        )),
+                  ] else ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 40),
+                      child: Column(
                         children: [
-                          Text('Current',
-                              style: TextStyle(color: c.muted, fontSize: 12)),
+                          const Text('⚖', style: TextStyle(fontSize: 32)),
+                          const SizedBox(height: 10),
                           Text(
-                            latest != null
-                                ? _fmtWeight(latest.weight)
-                                : '—',
-                            style: TextStyle(
-                                color: c.text,
-                                fontSize: 28,
-                                fontWeight: FontWeight.w700),
+                            'Tap Log Weight to record your first entry',
+                            style: TextStyle(color: c.muted, fontSize: 14),
                           ),
                         ],
                       ),
-                      const Spacer(),
-                      if (goalKg != null)
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text('Goal',
-                                style: TextStyle(color: c.muted, fontSize: 12)),
-                            Text(
-                              _fmtWeight(goalKg),
-                              style: TextStyle(
-                                  color: c.accent,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                            if (latest != null) ...[
-                              const SizedBox(height: 2),
-                              Text(
-                                _delta(latest.weight, goalKg),
-                                style: TextStyle(color: c.muted, fontSize: 12),
-                              ),
-                            ],
-                          ],
-                        ),
-                    ],
-                  ),
-
-                  // Log weight controls
-                  const SizedBox(height: 16),
-                  if (_inputOpen)
-                    Row(children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _weightCtrl,
-                          autofocus: true,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))
-                          ],
-                          decoration: InputDecoration(
-                            labelText: 'Weight (${_unit()})',
-                            isDense: true,
-                          ),
-                          onSubmitted: (_) => _logWeight(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                          onPressed: _logWeight, child: const Text('Save')),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () =>
-                            setState(() => _inputOpen = false),
-                        child: const Text('Cancel'),
-                      ),
-                    ])
-                  else
-                    Center(
-                      child: ElevatedButton.icon(
-                        onPressed: () => setState(() => _inputOpen = true),
-                        icon: const Icon(Icons.add),
-                        label: const Text('Log weight'),
-                      ),
                     ),
-
-                  // Set goal
-                  if (_goalOpen) ...[
-                    const SizedBox(height: 12),
-                    Row(children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _goalCtrl,
-                          autofocus: true,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))
-                          ],
-                          decoration: InputDecoration(
-                            labelText: 'Goal weight (${_unit()})',
-                            isDense: true,
-                          ),
-                          onSubmitted: (_) => _setGoal(),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(onPressed: _setGoal, child: const Text('Set')),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () => setState(() => _goalOpen = false),
-                        child: const Text('Cancel'),
-                      ),
-                    ]),
-                  ] else
-                    Center(
-                      child: TextButton.icon(
-                        onPressed: () => setState(() => _goalOpen = true),
-                        icon: Icon(Icons.flag_outlined, size: 16, color: c.muted),
-                        label: Text(
-                            goalKg != null ? 'Change goal' : 'Set goal',
-                            style: TextStyle(color: c.muted)),
-                      ),
-                    ),
+                  ],
+                  const SizedBox(height: 80),
                 ],
               ),
             ),
-
-            // Chart
-            if (sorted.length >= 2) ...[
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: c.card,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: c.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Progress',
-                        style: TextStyle(
-                            color: c.text, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      height: 160,
-                      child: _WeightChart(
-                        entries: sorted,
-                        goalKg: goalKg,
-                        fromKg: _fromKg,
-                        color: c.accent,
-                        goalColor: c.mint,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
-            // History list
-            if (weights.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              Text('History',
-                  style: TextStyle(
-                      color: c.text,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15)),
-              const SizedBox(height: 10),
-              ...weights.map((e) => _WeightEntryTile(
-                    entry: e,
-                    displayWeight: _fmtWeight(e.weight),
-                    onDelete: () => _confirmDelete(context, ref, e),
-                  )),
-            ],
-
-            const SizedBox(height: 80),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -298,15 +411,15 @@ class _WeightScreenState extends ConsumerState<WeightScreen> {
       BuildContext context, WidgetRef ref, WeightEntry entry) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete entry?'),
         content: const Text('Remove this weight log?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
               child: const Text('Cancel')),
           TextButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
               child: const Text('Delete')),
         ],
       ),
@@ -345,9 +458,7 @@ class _WeightEntryTile extends StatelessWidget {
         children: [
           Text(displayWeight,
               style: TextStyle(
-                  color: c.text,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 16)),
+                  color: c.text, fontWeight: FontWeight.w600, fontSize: 16)),
           const Spacer(),
           Text(dateStr, style: TextStyle(color: c.muted, fontSize: 12)),
           const SizedBox(width: 12),
@@ -355,6 +466,63 @@ class _WeightEntryTile extends StatelessWidget {
             onTap: onDelete,
             child: Icon(Icons.delete_outline, size: 18, color: c.danger),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeightInput extends StatelessWidget {
+  final TextEditingController ctrl;
+  final String unit;
+  final Color color;
+  final VoidCallback onSubmitted;
+
+  const _WeightInput({
+    required this.ctrl,
+    required this.unit,
+    required this.color,
+    required this.onSubmitted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))
+              ],
+              onSubmitted: (_) => onSubmitted(),
+              style: TextStyle(
+                color: color,
+                fontFamily: 'DM Mono',
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+              decoration: const InputDecoration(
+                hintText: '0.0',
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+          Text(unit, style: TextStyle(color: c.muted, fontSize: 13)),
         ],
       ),
     );
@@ -411,15 +579,18 @@ class _WeightChart extends StatelessWidget {
               ),
             ),
           ),
-          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         ),
         extraLinesData: goalKg != null
             ? ExtraLinesData(horizontalLines: [
                 HorizontalLine(
                   y: fromKg(goalKg!),
-                  color: goalColor.withOpacity(0.6),
+                  color: goalColor.withValues(alpha: 0.6),
                   strokeWidth: 1.5,
                   dashArray: [6, 4],
                 ),
@@ -441,7 +612,7 @@ class _WeightChart extends StatelessWidget {
             ),
             belowBarData: BarAreaData(
               show: true,
-              color: color.withOpacity(0.08),
+              color: color.withValues(alpha: 0.08),
             ),
           ),
         ],

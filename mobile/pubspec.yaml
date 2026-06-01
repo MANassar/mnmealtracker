@@ -4,7 +4,7 @@ publish_to: none
 version: 1.0.0+1
 
 environment:
-  sdk: ">=2.17.1 <3.0.0"
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -14,8 +14,8 @@ dependencies:
   # State management
   flutter_riverpod: ^2.1.3
 
-  # Navigation (4.x is the last series compatible with Flutter 3.0.x)
-  go_router: ^4.5.1
+  # Navigation
+  go_router: ^17.2.3
 
   # Local database
   isar: ^3.1.0
@@ -26,18 +26,18 @@ dependencies:
   dio: ^4.0.6
 
   # Image
-  image_picker: ^0.8.6+4
-  flutter_image_compress: ^1.1.3
+  image_picker: ^1.2.2
+  flutter_image_compress: ^2.4.0
 
   # Utilities
   intl: ^0.17.0
   uuid: ^3.0.6
   shared_preferences: ^2.0.15
-  file_picker: ^5.2.2
-  share_plus: ^6.3.0
+  file_picker: ^11.0.2
+  share_plus: ^12.0.2
 
   # Charts
-  fl_chart: ^0.55.2
+  fl_chart: ^1.2.0
 
 dev_dependencies:
   flutter_test:

@@ -66,8 +66,11 @@ class IsarRepository {
 
   // ── Weights ────────────────────────────────────────────────────────────────
 
-  Future<List<WeightEntry>> getAllWeights() =>
-      _isar.weightEntrys.where().sortByDateDesc().thenByTimestampDesc().findAll();
+  Future<List<WeightEntry>> getAllWeights() => _isar.weightEntrys
+      .where()
+      .sortByDateDesc()
+      .thenByTimestampDesc()
+      .findAll();
 
   Future<void> saveWeight(WeightEntry entry) async {
     if (entry.uuid.isEmpty) entry.uuid = const Uuid().v4();
@@ -89,11 +92,9 @@ class IsarRepository {
     };
   }
 
-  Future<ImportResult> importFromJson(
-      Map<String, dynamic> json) async {
-    final rawMeals = (json['meals'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-    final rawWeights =
-        (json['weights'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+  Future<ImportResult> importFromJson(Map<String, dynamic> json) async {
+    final rawMeals = _objectList(json['meals']);
+    final rawWeights = _objectList(json['weights']);
 
     final existing = await getAllMeals();
     final existingUuids = {for (final m in existing) m.uuid};
@@ -141,9 +142,9 @@ class IsarRepository {
 
   Meal _mealFromJson(Map<String, dynamic> json) {
     final meal = Meal()
-      ..uuid = (json['id'] as String?) ?? const Uuid().v4()
-      ..date = json['date'] as String
-      ..timestamp = (json['timestamp'] as num).toInt()
+      ..uuid = _idFromJson(json['id'])
+      ..date = _dateFromJson(json['date'], json['timestamp'])
+      ..timestamp = _timestampFromJson(json['timestamp'])
       ..mealName = json['mealName'] as String? ?? 'Unknown meal'
       ..calories = (json['calories'] as num?)?.toDouble() ?? 0
       ..protein = (json['protein'] as num?)?.toDouble() ?? 0
@@ -169,8 +170,47 @@ class IsarRepository {
       };
 
   WeightEntry _weightFromJson(Map<String, dynamic> json) => WeightEntry()
-    ..uuid = (json['id'] as String?) ?? const Uuid().v4()
-    ..date = json['date'] as String
-    ..timestamp = (json['timestamp'] as num).toInt()
-    ..weight = (json['weight'] as num).toDouble();
+    ..uuid = _idFromJson(json['id'])
+    ..date = _dateFromJson(json['date'], json['timestamp'])
+    ..timestamp = _timestampFromJson(json['timestamp'])
+    ..weight = _weightKgFromJson(json);
+
+  List<Map<String, dynamic>> _objectList(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  String _idFromJson(dynamic value) {
+    if (value == null || value.toString().trim().isEmpty) {
+      return const Uuid().v4();
+    }
+    return value.toString();
+  }
+
+  int _timestampFromJson(dynamic value) {
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final numeric = num.tryParse(value);
+      if (numeric != null) return numeric.toInt();
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed.millisecondsSinceEpoch;
+    }
+    return DateTime.now().millisecondsSinceEpoch;
+  }
+
+  String _dateFromJson(dynamic date, dynamic timestamp) {
+    if (date is String && date.trim().isNotEmpty) return date.trim();
+    final dt =
+        DateTime.fromMillisecondsSinceEpoch(_timestampFromJson(timestamp));
+    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  }
+
+  double _weightKgFromJson(Map<String, dynamic> json) {
+    final value = (json['weight'] as num?)?.toDouble() ?? 0;
+    final unit = json['unit']?.toString().toLowerCase();
+    return unit == 'lbs' ? value * 0.45359237 : value;
+  }
 }

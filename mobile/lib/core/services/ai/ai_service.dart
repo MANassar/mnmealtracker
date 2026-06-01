@@ -6,9 +6,12 @@ import 'package:dio/dio.dart';
 import '../../models/app_settings.dart';
 import 'meal_analysis.dart';
 
-const _defaultServerUrl = 'https://mnmealtracker.netlify.app/.netlify/functions/analyze-meal';
+const _defaultServerUrl =
+    'https://mnmealtracker.netlify.app/.netlify/functions/analyze-meal';
+const _defaultServerToken = 'f60c9972646d37fe29b95d95806f103c551799183c90d388';
 
-const _analyzePrompt = '''You are a clinical nutritionist. Analyze the food from the image, description, or both.
+const _analyzePrompt =
+    '''You are a clinical nutritionist. Analyze the food from the image, description, or both.
 Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["visible component with estimated quantity","second visible component with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
 Calories in kcal. Macros in grams. Do not underestimate portions.''';
@@ -28,7 +31,8 @@ String _optimizePrompt(Map<String, dynamic> analysis, String desc) =>
     'Calories in kcal. Macros in grams. Keep protein high. Each suggestion must name the original item, the replacement, and specific quantities.';
 
 class AiService {
-  final Dio _dio = Dio(BaseOptions(connectTimeout: 30000, receiveTimeout: 60000));
+  final Dio _dio =
+      Dio(BaseOptions(connectTimeout: 30000, receiveTimeout: 60000));
 
   Future<MealAnalysis> analyze({
     required AppSettings settings,
@@ -52,10 +56,29 @@ class AiService {
       mode: 'analyze',
       b64: b64,
       mimeType: mimeType,
-      description: description,
+      description: _descriptionContext(description, hasImage: b64 != null),
     );
 
-    return MealAnalysis.fromJson(_parseJson(rawText));
+    try {
+      return MealAnalysis.fromJson(_parseJson(rawText));
+    } on FormatException {
+      if (b64 == null && description.trim().isNotEmpty) {
+        final retryText = await _callProvider(
+          settings: settings,
+          mode: 'analyze',
+          description:
+              'TEXT ONLY. There is no image attached. Analyze this food description and return only the requested raw JSON object: ${description.trim()}',
+        );
+        try {
+          return MealAnalysis.fromJson(_parseJson(retryText));
+        } on FormatException {
+          // Fall through to the user-facing message below.
+        }
+      }
+      throw const AiServiceException(
+        'The AI response was not valid nutrition data. Try again, or add a more specific meal description.',
+      );
+    }
   }
 
   Future<MealOptimization> optimize({
@@ -70,7 +93,13 @@ class AiService {
       description: description,
     );
 
-    return MealOptimization.fromJson(_parseJson(rawText));
+    try {
+      return MealOptimization.fromJson(_parseJson(rawText));
+    } on FormatException {
+      throw const AiServiceException(
+        'The AI response was not valid optimization data. Try again in a moment.',
+      );
+    }
   }
 
   Future<String> _callProvider({
@@ -81,36 +110,44 @@ class AiService {
     String description = '',
     Map<String, dynamic>? analysis,
   }) async {
-    switch (settings.provider) {
-      case 'server':
-        return _callServer(
-          settings: settings,
-          mode: mode,
-          b64: b64,
-          mimeType: mimeType,
-          description: description,
-          analysis: analysis,
-        );
-      case 'anthropic':
-        return _callAnthropic(
-          apiKey: settings.anthropicKey ?? '',
-          mode: mode,
-          b64: b64,
-          mimeType: mimeType,
-          description: description,
-          analysis: analysis,
-        );
-      case 'openai':
-        return _callOpenAi(
-          apiKey: settings.openaiKey ?? '',
-          mode: mode,
-          b64: b64,
-          mimeType: mimeType,
-          description: description,
-          analysis: analysis,
-        );
-      default:
-        throw Exception('Unknown provider: ${settings.provider}');
+    try {
+      switch (settings.provider) {
+        case 'server':
+          return _callServer(
+            settings: settings,
+            mode: mode,
+            b64: b64,
+            mimeType: mimeType,
+            description: description,
+            analysis: analysis,
+          );
+        case 'anthropic':
+          return _callAnthropic(
+            apiKey: settings.anthropicKey ?? '',
+            mode: mode,
+            b64: b64,
+            mimeType: mimeType,
+            description: description,
+            analysis: analysis,
+          );
+        case 'openai':
+          return _callOpenAi(
+            apiKey: settings.openaiKey ?? '',
+            mode: mode,
+            b64: b64,
+            mimeType: mimeType,
+            description: description,
+            analysis: analysis,
+          );
+        default:
+          throw AiServiceException('Unknown provider: ${settings.provider}');
+      }
+    } on DioError catch (e) {
+      throw AiServiceException(_dioMessage(e, settings.provider));
+    } on FormatException {
+      throw const AiServiceException(
+        'The AI response was not valid JSON. Try again, or add a more specific meal description.',
+      );
     }
   }
 
@@ -131,8 +168,9 @@ class AiService {
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      if (settings.serverToken?.isNotEmpty == true)
-        'X-Meal-Tracker-Token': settings.serverToken!,
+      'X-Meal-Tracker-Token': settings.serverToken?.isNotEmpty == true
+          ? settings.serverToken!
+          : _defaultServerToken,
     };
 
     final body = <String, dynamic>{'mode': mode, 'desc': description};
@@ -200,10 +238,12 @@ class AiService {
     );
 
     final text = (response.data?['content'] as List?)
-        ?.whereType<Map>()
-        .firstWhere((c) => c['type'] == 'text', orElse: () => {})['text']
+            ?.whereType<Map>()
+            .firstWhere((c) => c['type'] == 'text', orElse: () => {})['text']
         as String?;
-    if (text == null || text.isEmpty) throw Exception('Empty response from Anthropic.');
+    if (text == null || text.isEmpty) {
+      throw Exception('Empty response from Anthropic.');
+    }
     return text;
   }
 
@@ -252,7 +292,9 @@ class AiService {
     final text = (response.data?['choices'] as List?)
         ?.whereType<Map>()
         .first['message']?['content'] as String?;
-    if (text == null || text.isEmpty) throw Exception('Empty response from OpenAI.');
+    if (text == null || text.isEmpty) {
+      throw Exception('Empty response from OpenAI.');
+    }
     return text;
   }
 
@@ -265,8 +307,13 @@ class AiService {
     return 'image/jpeg';
   }
 
+  String _descriptionContext(String description, {required bool hasImage}) {
+    final trimmed = description.trim();
+    if (trimmed.isEmpty || hasImage) return trimmed;
+    return 'Text-only food description; no image is attached: $trimmed';
+  }
+
   Map<String, dynamic> _parseJson(String text) {
-    // Strip markdown fences if the model wrapped the response
     var cleaned = text.trim();
     if (cleaned.startsWith('```')) {
       cleaned = cleaned
@@ -274,6 +321,92 @@ class AiService {
           .replaceFirst(RegExp(r'```$'), '')
           .trim();
     }
-    return jsonDecode(cleaned) as Map<String, dynamic>;
+
+    try {
+      final direct = jsonDecode(cleaned);
+      if (direct is Map<String, dynamic>) return direct;
+    } on FormatException {
+      // Some models still add a short sentence before the object. If a JSON
+      // object is present, recover it instead of failing the whole analysis.
+    }
+
+    final start = cleaned.indexOf('{');
+    final end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      final extracted = jsonDecode(cleaned.substring(start, end + 1));
+      if (extracted is Map<String, dynamic>) return extracted;
+    }
+
+    throw const FormatException('AI response was not a JSON object.');
   }
+
+  String _dioMessage(DioError error, String provider) {
+    final statusCode = error.response?.statusCode;
+    final detail = _responseMessage(error.response?.data);
+
+    if (statusCode == 401) {
+      if (provider == 'server') {
+        return 'The meal analysis server rejected the request. Add or update the server token in Settings, or switch to OpenAI/Anthropic with your own API key.';
+      }
+      return '${_providerName(provider)} rejected the API key. Check the key in Settings and try again.';
+    }
+
+    if (statusCode == 403) {
+      return '${_providerName(provider)} refused this request. Check your API key permissions or server token.';
+    }
+
+    if (statusCode == 429) {
+      return '${_providerName(provider)} is rate limiting requests. Wait a moment and try again.';
+    }
+
+    if (statusCode != null && statusCode >= 500) {
+      return '${_providerName(provider)} is temporarily unavailable. Try again in a moment.';
+    }
+
+    switch (error.type) {
+      case DioErrorType.connectTimeout:
+      case DioErrorType.sendTimeout:
+      case DioErrorType.receiveTimeout:
+        return 'The meal analysis request timed out. Check your connection and try again.';
+      case DioErrorType.cancel:
+        return 'The meal analysis request was cancelled.';
+      case DioErrorType.response:
+        return detail == null
+            ? 'Meal analysis failed with HTTP status ${statusCode ?? 'unknown'}.'
+            : 'Meal analysis failed: $detail';
+      case DioErrorType.other:
+        return 'Could not reach ${_providerName(provider)}. Check your connection and try again.';
+    }
+  }
+
+  String? _responseMessage(dynamic data) {
+    if (data is Map) {
+      final value = data['error'] ?? data['message'] ?? data['detail'];
+      if (value != null) return value.toString();
+    }
+    if (data is String && data.trim().isNotEmpty) return data.trim();
+    return null;
+  }
+
+  String _providerName(String provider) {
+    switch (provider) {
+      case 'server':
+        return 'the meal analysis server';
+      case 'anthropic':
+        return 'Anthropic';
+      case 'openai':
+        return 'OpenAI';
+      default:
+        return provider;
+    }
+  }
+}
+
+class AiServiceException implements Exception {
+  final String message;
+
+  const AiServiceException(this.message);
+
+  @override
+  String toString() => message;
 }

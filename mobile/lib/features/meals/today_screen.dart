@@ -5,11 +5,11 @@ import 'package:go_router/go_router.dart';
 import '../../core/models/meal.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
-import '../../shared/widgets/macro_row.dart';
 import '../../shared/widgets/meal_card.dart';
+import '../../shared/widgets/pwa_chrome.dart';
 
 class TodayScreen extends ConsumerWidget {
-  TodayScreen({super.key});
+  const TodayScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -21,125 +21,168 @@ class TodayScreen extends ConsumerWidget {
     final totalP = meals.fold<double>(0.0, (s, m) => s + m.protein);
     final totalC = meals.fold<double>(0.0, (s, m) => s + m.carbs);
     final totalF = meals.fold<double>(0.0, (s, m) => s + m.fat);
-    final totalFi = meals.fold<double>(0.0, (s, m) => s + m.fiber);
-
-    final hasGoals = settings.goalCalories != null ||
-        settings.goalProtein != null ||
-        settings.goalCarbs != null ||
-        settings.goalFat != null;
+    final goalCalories = settings.goalCalories ?? 1800;
+    final goalProtein = settings.goalProtein ?? 150;
+    final goalCarbs = settings.goalCarbs ?? 180;
+    final goalFat = settings.goalFat ?? 60;
+    final remaining = goalCalories - totalCals;
+    final sortedMeals = [...meals]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     return Scaffold(
       backgroundColor: c.bg,
-      appBar: AppBar(
-        title: Text(
-          'Today',
-          style: TextStyle(color: c.text, fontWeight: FontWeight.w600),
-        ),
-        backgroundColor: c.surface,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.settings_outlined, color: c.muted),
-            onPressed: () => context.go('/settings'),
+      body: Column(
+        children: [
+          PwaTopBar(
+            eyebrow: _todayLabel(),
+            onSettings: () => context.push('/settings'),
           ),
-        ],
-      ),
-      body: CustomScrollView(
-        slivers: [
-          // Summary card
-          SliverToBoxAdapter(
-            child: Container(
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: c.card,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: c.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _todayLabel(),
-                    style: TextStyle(color: c.muted, fontSize: 13),
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 16),
+                      CalorieRing(
+                        consumed: totalCals,
+                        target: goalCalories,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        remaining >= 0
+                            ? '${remaining.round()} kcal remaining'
+                            : '${remaining.abs().round()} kcal over target',
+                        style: TextStyle(
+                          color: remaining >= 0 ? c.mint : c.danger,
+                          fontSize: 12,
+                          fontFamily: 'DM Mono',
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                        child: Row(
+                          children: [
+                            MacroProgressBar(
+                              label: 'Protein',
+                              value: totalP,
+                              max: goalProtein,
+                              color: c.mint,
+                            ),
+                            const SizedBox(width: 14),
+                            MacroProgressBar(
+                              label: 'Carbs',
+                              value: totalC,
+                              max: goalCarbs,
+                              color: c.sky,
+                            ),
+                            const SizedBox(width: 14),
+                            MacroProgressBar(
+                              label: 'Fat',
+                              value: totalF,
+                              max: goalFat,
+                              color: c.peach,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                meals.isEmpty
+                                    ? 'No meals logged yet'
+                                    : '${meals.length} Meal${meals.length > 1 ? 's' : ''} today',
+                                style: TextStyle(
+                                  color: c.muted,
+                                  fontFamily: 'Playfair Display',
+                                  fontSize: 12,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ),
+                            if (meals.isNotEmpty)
+                              Text(
+                                '${totalP.toStringAsFixed(0)}P·${totalC.toStringAsFixed(0)}C·${totalF.toStringAsFixed(0)}F',
+                                style: TextStyle(
+                                  color: c.muted,
+                                  fontSize: 10,
+                                  fontFamily: 'DM Mono',
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  MacroRow(
-                    calories: totalCals,
-                    protein: totalP,
-                    carbs: totalC,
-                    fat: totalF,
-                    fiber: totalFi,
-                    goalCalories: settings.goalCalories,
-                    goalProtein: settings.goalProtein,
-                    goalCarbs: settings.goalCarbs,
-                    goalFat: settings.goalFat,
-                  ),
-                  if (hasGoals && settings.goalCalories != null) ...[
-                    const SizedBox(height: 12),
-                    _CalorieBar(
-                      consumed: totalCals,
-                      goal: settings.goalCalories!,
-                      color: c.accent,
+                ),
+                if (meals.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 120),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '🍽',
+                              style: TextStyle(
+                                fontSize: 36,
+                                color: c.muted.withValues(alpha: 0.6),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text.rich(
+                              TextSpan(
+                                text: 'Tap ',
+                                children: [
+                                  TextSpan(
+                                    text: '+',
+                                    style: TextStyle(color: c.accent),
+                                  ),
+                                  const TextSpan(
+                                      text: ' to log your first meal'),
+                                ],
+                              ),
+                              style: TextStyle(color: c.muted, fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ],
-                ],
-              ),
+                  )
+                else
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, i) {
+                          final meal = sortedMeals[i];
+                          return MealCard(
+                            meal: meal,
+                            onEdit: () => context.push('/add', extra: {
+                              'editingMeal': meal,
+                              'returnPath': '/today',
+                            }),
+                            onDelete: () => _confirmDelete(context, ref, meal),
+                            onLogAgain: () => context.push('/add', extra: {
+                              'repeatMeal': meal,
+                              'returnPath': '/today',
+                            }),
+                          );
+                        },
+                        childCount: sortedMeals.length,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-
-          // Meal list
-          if (meals.isEmpty)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.restaurant_menu,
-                        size: 48, color: c.muted.withOpacity(0.4)),
-                    const SizedBox(height: 12),
-                    Text(
-                      'No meals logged today',
-                      style: TextStyle(color: c.muted),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Tap + to log your first meal',
-                      style: TextStyle(color: c.muted, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, i) {
-                    final meal = meals[i];
-                    return MealCard(
-                      meal: meal,
-                      onEdit: () => context.push('/add',
-                          extra: {
-                            'editingMeal': meal,
-                            'returnPath': '/today',
-                          }),
-                      onDelete: () => _confirmDelete(context, ref, meal),
-                    );
-                  },
-                  childCount: meals.length,
-                ),
-              ),
-            ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/add'),
-        backgroundColor: c.accent,
-        foregroundColor: c.bg,
-        icon: const Icon(Icons.add),
-        label: const Text('Log meal'),
       ),
     );
   }
@@ -147,29 +190,45 @@ class TodayScreen extends ConsumerWidget {
   String _todayLabel() {
     final now = DateTime.now();
     const weekdays = [
-      'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
       'Sunday'
     ];
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
-    return '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]}';
+    return '${weekdays[now.weekday - 1]}, ${now.day} ${months[now.month - 1]}'
+        .toUpperCase();
   }
 
   Future<void> _confirmDelete(
       BuildContext context, WidgetRef ref, Meal meal) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete meal?'),
         content: Text('Remove "${meal.mealName}" from today?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
               child: const Text('Cancel')),
           TextButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
               child: const Text('Delete')),
         ],
       ),
@@ -177,55 +236,5 @@ class TodayScreen extends ConsumerWidget {
     if (ok == true) {
       await ref.read(mealsProvider.notifier).delete(meal.id);
     }
-  }
-}
-
-class _CalorieBar extends StatelessWidget {
-  final double consumed;
-  final double goal;
-  final Color color;
-
-  const _CalorieBar({
-    required this.consumed,
-    required this.goal,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.appColors;
-    final pct = (consumed / goal).clamp(0.0, 1.0);
-    final over = consumed > goal;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('${consumed.toInt()} / ${goal.toInt()} kcal',
-                style: TextStyle(
-                    color: over ? c.danger : c.muted, fontSize: 12)),
-            Text(
-              over
-                  ? '+${(consumed - goal).toInt()} over'
-                  : '${(goal - consumed).toInt()} left',
-              style: TextStyle(
-                  color: over ? c.danger : c.muted, fontSize: 12),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: pct,
-            backgroundColor: c.border,
-            valueColor: AlwaysStoppedAnimation(over ? c.danger : color),
-            minHeight: 6,
-          ),
-        ),
-      ],
-    );
   }
 }

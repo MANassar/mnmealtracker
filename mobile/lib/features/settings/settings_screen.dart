@@ -5,12 +5,15 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/models/app_settings.dart';
 import '../../core/providers.dart';
 import '../../core/repositories/isar_repository.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/widgets/pwa_chrome.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -38,16 +41,33 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _openaiCtrl = TextEditingController(text: s.openaiKey ?? '');
     _tokenCtrl = TextEditingController(text: s.serverToken ?? '');
     _serverUrlCtrl = TextEditingController(text: s.serverUrl ?? '');
-    _calCtrl = TextEditingController(
-        text: s.goalCalories?.toStringAsFixed(0) ?? '');
+    _calCtrl =
+        TextEditingController(text: s.goalCalories?.toStringAsFixed(0) ?? '');
     _protCtrl =
         TextEditingController(text: s.goalProtein?.toStringAsFixed(0) ?? '');
     _carbCtrl =
         TextEditingController(text: s.goalCarbs?.toStringAsFixed(0) ?? '');
-    _fatCtrl =
-        TextEditingController(text: s.goalFat?.toStringAsFixed(0) ?? '');
+    _fatCtrl = TextEditingController(text: s.goalFat?.toStringAsFixed(0) ?? '');
     _fibCtrl =
         TextEditingController(text: s.goalFiber?.toStringAsFixed(0) ?? '');
+  }
+
+  String _targetText(double? value) => value?.toStringAsFixed(0) ?? '';
+
+  bool _targetFieldsMatch(AppSettings settings) {
+    return _calCtrl.text == _targetText(settings.goalCalories) &&
+        _protCtrl.text == _targetText(settings.goalProtein) &&
+        _carbCtrl.text == _targetText(settings.goalCarbs) &&
+        _fatCtrl.text == _targetText(settings.goalFat) &&
+        _fibCtrl.text == _targetText(settings.goalFiber);
+  }
+
+  void _syncTargetFields(AppSettings settings) {
+    _calCtrl.text = _targetText(settings.goalCalories);
+    _protCtrl.text = _targetText(settings.goalProtein);
+    _carbCtrl.text = _targetText(settings.goalCarbs);
+    _fatCtrl.text = _targetText(settings.goalFat);
+    _fibCtrl.text = _targetText(settings.goalFiber);
   }
 
   @override
@@ -70,12 +90,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           anthropicKey: _anthropicCtrl.text.trim().isEmpty
               ? null
               : _anthropicCtrl.text.trim(),
-          openaiKey: _openaiCtrl.text.trim().isEmpty
-              ? null
-              : _openaiCtrl.text.trim(),
-          serverToken: _tokenCtrl.text.trim().isEmpty
-              ? null
-              : _tokenCtrl.text.trim(),
+          openaiKey:
+              _openaiCtrl.text.trim().isEmpty ? null : _openaiCtrl.text.trim(),
+          serverToken:
+              _tokenCtrl.text.trim().isEmpty ? null : _tokenCtrl.text.trim(),
           serverUrl: _serverUrlCtrl.text.trim().isEmpty
               ? null
               : _serverUrlCtrl.text.trim(),
@@ -95,118 +113,163 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AppSettings>(settingsProvider, (previous, next) {
+      if (previous == null || _targetFieldsMatch(previous)) {
+        _syncTargetFields(next);
+      }
+    });
+
     final settings = ref.watch(settingsProvider);
     final c = context.appColors;
 
     return Scaffold(
       backgroundColor: c.bg,
-      appBar: AppBar(
-        backgroundColor: c.surface,
-        title: Text('Settings', style: TextStyle(color: c.text)),
-        actions: [
-          TextButton(
-            onPressed: _save,
-            child: Text('Save', style: TextStyle(color: c.accent)),
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      body: Column(
         children: [
-          // ── AI Provider ────────────────────────────────────────────
-          _SectionHeader('AI Provider'),
-          _SegmentedRow(
-            options: const ['server', 'anthropic', 'openai'],
-            labels: const ['Server', 'Anthropic', 'OpenAI'],
-            selected: settings.provider,
-            onSelect: (v) => ref
-                .read(settingsProvider.notifier)
-                .update(settings.copyWith(provider: v)),
-            colors: [c.oai, c.plum, c.oai],
+          PwaTopBar(
+            title: 'Settings',
+            showBorder: true,
+            leading: IconButton(
+              icon: Icon(Icons.close, color: c.muted),
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/today');
+                }
+              },
+              style: IconButton.styleFrom(
+                minimumSize: const Size(44, 44),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            trailing: TextButton(
+              onPressed: _save,
+              child: Text(
+                'Save',
+                style: TextStyle(
+                  color: c.accent,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           ),
-          const SizedBox(height: 12),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                // ── AI Provider ────────────────────────────────────────────
+                const _SectionHeader('AI Provider'),
+                _SegmentedRow(
+                  options: const ['server', 'anthropic', 'openai'],
+                  labels: const ['Server', 'Anthropic', 'OpenAI'],
+                  selected: settings.provider,
+                  onSelect: (v) => ref
+                      .read(settingsProvider.notifier)
+                      .update(settings.copyWith(provider: v)),
+                  colors: [c.oai, c.plum, c.oai],
+                ),
+                const SizedBox(height: 12),
 
-          if (settings.provider == 'server') ...[
-            _Field(
-                ctrl: _tokenCtrl,
-                label: 'Server token (optional)',
-                obscure: true),
-            const SizedBox(height: 8),
-            _Field(
-                ctrl: _serverUrlCtrl,
-                label: 'Server URL (leave blank for default)'),
-          ],
-          if (settings.provider == 'anthropic')
-            _Field(
-                ctrl: _anthropicCtrl, label: 'Anthropic API key', obscure: true),
-          if (settings.provider == 'openai')
-            _Field(ctrl: _openaiCtrl, label: 'OpenAI API key', obscure: true),
+                if (settings.provider == 'server') ...[
+                  _Field(
+                      ctrl: _tokenCtrl,
+                      label: 'Server token (optional)',
+                      obscure: true),
+                  const SizedBox(height: 8),
+                  _Field(
+                      ctrl: _serverUrlCtrl,
+                      label: 'Server URL (leave blank for default)'),
+                ],
+                if (settings.provider == 'anthropic')
+                  _Field(
+                      ctrl: _anthropicCtrl,
+                      label: 'Anthropic API key',
+                      obscure: true),
+                if (settings.provider == 'openai')
+                  _Field(
+                      ctrl: _openaiCtrl,
+                      label: 'OpenAI API key',
+                      obscure: true),
 
-          const SizedBox(height: 24),
+                const SizedBox(height: 24),
 
-          // ── Appearance ─────────────────────────────────────────────
-          _SectionHeader('Theme'),
-          _SegmentedRow(
-            options: const ['auto', 'light', 'dark'],
-            labels: const ['Auto', 'Light', 'Dark'],
-            selected: settings.theme,
-            onSelect: (v) => ref
-                .read(settingsProvider.notifier)
-                .update(settings.copyWith(theme: v)),
-            colors: [c.muted, c.accent, c.accent],
+                // ── Appearance ─────────────────────────────────────────────
+                const _SectionHeader('Theme'),
+                _SegmentedRow(
+                  options: const ['auto', 'light', 'dark'],
+                  labels: const ['Auto', 'Light', 'Dark'],
+                  selected: settings.theme,
+                  onSelect: (v) => ref
+                      .read(settingsProvider.notifier)
+                      .update(settings.copyWith(theme: v)),
+                  colors: [c.muted, c.accent, c.accent],
+                ),
+
+                const SizedBox(height: 24),
+
+                // ── Weight unit ────────────────────────────────────────────
+                const _SectionHeader('Weight Unit'),
+                _SegmentedRow(
+                  options: const ['kg', 'lbs'],
+                  labels: const ['kg', 'lbs'],
+                  selected: settings.weightUnit,
+                  onSelect: (v) => ref
+                      .read(settingsProvider.notifier)
+                      .update(settings.copyWith(weightUnit: v)),
+                  colors: [c.mint, c.mint],
+                ),
+
+                const SizedBox(height: 24),
+
+                // ── Daily targets ──────────────────────────────────────────
+                const _SectionHeader('Daily Targets'),
+                _Field(ctrl: _calCtrl, label: 'Calories (kcal)', numeric: true),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(
+                      child: _Field(
+                          ctrl: _protCtrl,
+                          label: 'Protein (g)',
+                          numeric: true)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: _Field(
+                          ctrl: _carbCtrl, label: 'Carbs (g)', numeric: true)),
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(
+                      child: _Field(
+                          ctrl: _fatCtrl, label: 'Fat (g)', numeric: true)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: _Field(
+                          ctrl: _fibCtrl, label: 'Fiber (g)', numeric: true)),
+                ]),
+
+                const SizedBox(height: 24),
+
+                // ── Data ───────────────────────────────────────────────────
+                const _SectionHeader('Data'),
+                _ActionTile(
+                  icon: Icons.upload_outlined,
+                  label: 'Export backup',
+                  color: c.accent,
+                  onTap: () => _export(context),
+                ),
+                const SizedBox(height: 8),
+                _ActionTile(
+                  icon: Icons.download_outlined,
+                  label: 'Import backup',
+                  color: c.sky,
+                  onTap: () => _import(context, ref),
+                ),
+
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
-
-          const SizedBox(height: 24),
-
-          // ── Weight unit ────────────────────────────────────────────
-          _SectionHeader('Weight Unit'),
-          _SegmentedRow(
-            options: const ['kg', 'lbs'],
-            labels: const ['kg', 'lbs'],
-            selected: settings.weightUnit,
-            onSelect: (v) => ref
-                .read(settingsProvider.notifier)
-                .update(settings.copyWith(weightUnit: v)),
-            colors: [c.mint, c.mint],
-          ),
-
-          const SizedBox(height: 24),
-
-          // ── Daily targets ──────────────────────────────────────────
-          _SectionHeader('Daily Targets'),
-          _Field(ctrl: _calCtrl, label: 'Calories (kcal)', numeric: true),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(child: _Field(ctrl: _protCtrl, label: 'Protein (g)', numeric: true)),
-            const SizedBox(width: 8),
-            Expanded(child: _Field(ctrl: _carbCtrl, label: 'Carbs (g)', numeric: true)),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(child: _Field(ctrl: _fatCtrl, label: 'Fat (g)', numeric: true)),
-            const SizedBox(width: 8),
-            Expanded(child: _Field(ctrl: _fibCtrl, label: 'Fiber (g)', numeric: true)),
-          ]),
-
-          const SizedBox(height: 24),
-
-          // ── Data ───────────────────────────────────────────────────
-          _SectionHeader('Data'),
-          _ActionTile(
-            icon: Icons.upload_outlined,
-            label: 'Export backup',
-            color: c.accent,
-            onTap: () => _export(context),
-          ),
-          const SizedBox(height: 8),
-          _ActionTile(
-            icon: Icons.download_outlined,
-            label: 'Import backup',
-            color: c.sky,
-            onTap: () => _import(context, ref),
-          ),
-
-          const SizedBox(height: 40),
         ],
       ),
     );
@@ -222,8 +285,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           'meal-tracker-export-${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.json';
       final file = File('${dir.path}/$fname');
       await file.writeAsString(jsonStr);
-      await Share.shareXFiles([XFile(file.path)], subject: 'Meal Tracker backup');
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          subject: 'Meal Tracker backup',
+        ),
+      );
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Export failed: $e')));
     }
@@ -231,7 +300,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _import(BuildContext context, WidgetRef ref) async {
     try {
-      final picked = await FilePicker.platform.pickFiles(
+      final picked = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['json'],
       );
@@ -240,11 +309,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final json = jsonDecode(raw) as Map<String, dynamic>;
       final importResult =
           await ref.read(mealsProvider.notifier).importJson(json);
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(
             'Imported ${importResult.meals} meals, ${importResult.weights} weights'),
       ));
     } catch (e) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Import failed: $e')));
     }
@@ -264,7 +335,9 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(title,
           style: TextStyle(
-              color: c.muted, fontSize: 12, fontWeight: FontWeight.w600,
+              color: c.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
               letterSpacing: 0.6)),
     );
   }
@@ -324,7 +397,7 @@ class _SegmentedRow extends StatelessWidget {
               margin: EdgeInsets.only(right: i < options.length - 1 ? 6 : 0),
               padding: const EdgeInsets.symmetric(vertical: 10),
               decoration: BoxDecoration(
-                color: isSelected ? colors[i].withOpacity(0.15) : c.card,
+                color: isSelected ? colors[i].withValues(alpha: 0.15) : c.card,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                     color: isSelected ? colors[i] : c.border, width: 1.5),
@@ -334,8 +407,7 @@ class _SegmentedRow extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: isSelected ? colors[i] : c.muted,
-                  fontWeight:
-                      isSelected ? FontWeight.w600 : FontWeight.normal,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                   fontSize: 14,
                 ),
               ),
@@ -382,9 +454,4 @@ class _ActionTile extends StatelessWidget {
       ),
     );
   }
-}
-
-// Extension so AppColorsExtension exposes oai
-extension _OaiColor on AppColorsExtension {
-  Color get oai => AppColors.oai;
 }
