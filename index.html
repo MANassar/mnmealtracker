@@ -1847,7 +1847,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
     const age = Number(macroAge);
     if (!macroGender) { setMacroErr('Choose a gender.'); return; }
     if (!Number.isFinite(weight) || weight <= 0) { setMacroErr('Enter a valid weight.'); return; }
-    if (!Number.isFinite(age) || age < 13 || age > 100) { setMacroErr('Enter an age from 13 to 100.'); return; }
+    if (!Number.isFinite(age) || age < 7 || age > 100) { setMacroErr('Enter an age from 7 to 100.'); return; }
 
     const profile = {
       gender: macroGender,
@@ -2002,7 +2002,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
               <label style="display:block">
                 <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Age</div>
                 <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 12px">
-                  <input type="number" min="13" max="100" step="1" value=${macroAge} onInput=${e => setMacroAge(e.target.value)}
+                  <input type="number" min="7" max="100" step="1" value=${macroAge} onInput=${e => setMacroAge(e.target.value)}
                     placeholder="Years"
                     style="width:100%;background:transparent;border:none;color:var(--accent);font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
                 </div>
