@@ -1029,6 +1029,12 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
   const [editFat,     setEditFat]     = useState(seedMeal ? String(Number(seedMeal.fat || 0).toFixed(1)) : '');
   const [editFiber,   setEditFiber]   = useState(seedMeal ? String(Number(seedMeal.fiber || 0).toFixed(1)) : '');
   const [userEditedNutrition, setUserEditedNutrition] = useState(false);
+  const userEditedNutritionRef = useRef(false);
+  const editCalRef = useRef(null);
+  const editProteinRef = useRef(null);
+  const editCarbsRef = useRef(null);
+  const editFatRef = useRef(null);
+  const editFiberRef = useRef(null);
   const [analysisProvider, setAnalysisProvider] = useState(seedMeal?.provider || activeProvider);
   const [optStatus, setOptStatus] = useState('idle');
   const [optimization, setOptimization] = useState(null);
@@ -1115,39 +1121,55 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
     const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
+  const nutritionInputValue = (ref, fallback) => ref.current ? ref.current.value : fallback;
   const setEditableNutrition = next => {
-    setEditCal(String(Math.round(next?.calories || 0)));
-    setEditProtein(String(Number(next?.protein || 0).toFixed(1)));
-    setEditCarbs(String(Number(next?.carbs || 0).toFixed(1)));
-    setEditFat(String(Number(next?.fat || 0).toFixed(1)));
-    setEditFiber(String(Number(next?.fiber || 0).toFixed(1)));
+    const values = {
+      calories: String(Math.round(next?.calories || 0)),
+      protein: String(Number(next?.protein || 0).toFixed(1)),
+      carbs: String(Number(next?.carbs || 0).toFixed(1)),
+      fat: String(Number(next?.fat || 0).toFixed(1)),
+      fiber: String(Number(next?.fiber || 0).toFixed(1)),
+    };
+    setEditCal(values.calories);
+    setEditProtein(values.protein);
+    setEditCarbs(values.carbs);
+    setEditFat(values.fat);
+    setEditFiber(values.fiber);
+    if (editCalRef.current) editCalRef.current.value = values.calories;
+    if (editProteinRef.current) editProteinRef.current.value = values.protein;
+    if (editCarbsRef.current) editCarbsRef.current.value = values.carbs;
+    if (editFatRef.current) editFatRef.current.value = values.fat;
+    if (editFiberRef.current) editFiberRef.current.value = values.fiber;
+    userEditedNutritionRef.current = false;
     setUserEditedNutrition(false);
   };
   const markNutritionEdited = field => {
-    if (!userEditedNutrition) trackEvent('meal_nutrition_edited', { field, source: isEditing ? 'edit' : 'add' });
-    setUserEditedNutrition(true);
+    if (!userEditedNutritionRef.current) {
+      userEditedNutritionRef.current = true;
+      trackEvent('meal_nutrition_edited', { field, source: isEditing ? 'edit' : 'add' });
+    }
   };
   const hasNutritionEdits = sourceAnalysis => {
     const same = (a, b) => Math.abs(nutritionNumber(a, 0) - nutritionNumber(b, 0)) < 0.05;
-    return !same(editCal, sourceAnalysis.calories)
-      || !same(editProtein, sourceAnalysis.protein)
-      || !same(editCarbs, sourceAnalysis.carbs)
-      || !same(editFat, sourceAnalysis.fat)
-      || !same(editFiber, sourceAnalysis.fiber || 0);
+    return !same(nutritionInputValue(editCalRef, editCal), sourceAnalysis.calories)
+      || !same(nutritionInputValue(editProteinRef, editProtein), sourceAnalysis.protein)
+      || !same(nutritionInputValue(editCarbsRef, editCarbs), sourceAnalysis.carbs)
+      || !same(nutritionInputValue(editFatRef, editFat), sourceAnalysis.fat)
+      || !same(nutritionInputValue(editFiberRef, editFiber), sourceAnalysis.fiber || 0);
   };
   const changedNutritionFields = sourceAnalysis => {
     const same = (a, b) => Math.abs(nutritionNumber(a, 0) - nutritionNumber(b, 0)) < 0.05;
     return [
-      ['calories', editCal, sourceAnalysis.calories],
-      ['protein', editProtein, sourceAnalysis.protein],
-      ['carbs', editCarbs, sourceAnalysis.carbs],
-      ['fat', editFat, sourceAnalysis.fat],
-      ['fiber', editFiber, sourceAnalysis.fiber || 0],
+      ['calories', nutritionInputValue(editCalRef, editCal), sourceAnalysis.calories],
+      ['protein', nutritionInputValue(editProteinRef, editProtein), sourceAnalysis.protein],
+      ['carbs', nutritionInputValue(editCarbsRef, editCarbs), sourceAnalysis.carbs],
+      ['fat', nutritionInputValue(editFatRef, editFat), sourceAnalysis.fat],
+      ['fiber', nutritionInputValue(editFiberRef, editFiber), sourceAnalysis.fiber || 0],
     ].filter(([, next, previous]) => !same(next, previous)).map(([field]) => field);
   };
-  const NutritionInput = ({ label, value, onInput, color, field }) => html`
+  const NutritionInput = ({ label, value, inputRef, color, field }) => html`
     <label style="background:var(--surface);border-radius:10px;padding:8px 4px;text-align:center;display:block">
-      <input type="number" min="0" step="0.1" value=${value} onInput=${e => { markNutritionEdited(field); onInput(e.target.value); }}
+      <input ref=${inputRef} type="number" min="0" step="0.1" defaultValue=${value} onInput=${() => markNutritionEdited(field)}
         onKeyDown=${e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
         style="width:100%;background:transparent;border:none;border-bottom:1px solid ${color};color:${color};font-size:16px;font-weight:700;font-family:'DM Mono',monospace;text-align:center;outline:none;padding:2px 0"/>
       <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:5px">${label}</div>
@@ -1211,11 +1233,11 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
     if (!analysis) return;
     const reviewedAnalysis = {
       ...analysis,
-      calories: nutritionNumber(editCal, analysis.calories),
-      protein: nutritionNumber(editProtein, analysis.protein),
-      carbs: nutritionNumber(editCarbs, analysis.carbs),
-      fat: nutritionNumber(editFat, analysis.fat),
-      fiber: nutritionNumber(editFiber, analysis.fiber || 0),
+      calories: nutritionNumber(nutritionInputValue(editCalRef, editCal), analysis.calories),
+      protein: nutritionNumber(nutritionInputValue(editProteinRef, editProtein), analysis.protein),
+      carbs: nutritionNumber(nutritionInputValue(editCarbsRef, editCarbs), analysis.carbs),
+      fat: nutritionNumber(nutritionInputValue(editFatRef, editFat), analysis.fat),
+      fiber: nutritionNumber(nutritionInputValue(editFiberRef, editFiber), analysis.fiber || 0),
     };
     const key = activeProvider === 'anthropic' ? trimmedAnthropicKey : activeProvider === 'openai' ? trimmedOaiKey : '';
     setOptStatus('optimizing'); setOptimization(null); setErr('');
@@ -1252,11 +1274,11 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
     const providerSource = editedByUser ? 'user' : optimized ? activeProvider : analysisProvider;
     const reviewedAnalysis = optimized ? sourceAnalysis : {
       ...sourceAnalysis,
-      calories: nutritionNumber(editCal, sourceAnalysis.calories),
-      protein: nutritionNumber(editProtein, sourceAnalysis.protein),
-      carbs: nutritionNumber(editCarbs, sourceAnalysis.carbs),
-      fat: nutritionNumber(editFat, sourceAnalysis.fat),
-      fiber: nutritionNumber(editFiber, sourceAnalysis.fiber || 0),
+      calories: nutritionNumber(nutritionInputValue(editCalRef, editCal), sourceAnalysis.calories),
+      protein: nutritionNumber(nutritionInputValue(editProteinRef, editProtein), sourceAnalysis.protein),
+      carbs: nutritionNumber(nutritionInputValue(editCarbsRef, editCarbs), sourceAnalysis.carbs),
+      fat: nutritionNumber(nutritionInputValue(editFatRef, editFat), sourceAnalysis.fat),
+      fiber: nutritionNumber(nutritionInputValue(editFiberRef, editFiber), sourceAnalysis.fiber || 0),
     };
     onSave({
       id: meal?.id || Date.now(),
@@ -1351,16 +1373,16 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
             <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text);margin-bottom:12px">${analysis.mealName}</div>
             <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:12px">
               <span style="font-size:12px;color:var(--muted);flex:1">Calories</span>
-              <input type="number" min="0" step="1" value=${editCal} onInput=${e => { markNutritionEdited('calories'); setEditCal(e.target.value); }}
+              <input ref=${editCalRef} type="number" min="0" step="1" defaultValue=${editCal} onInput=${() => markNutritionEdited('calories')}
                 onKeyDown=${e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                 style="width:72px;background:transparent;border:none;border-bottom:1px solid ${pc};color:${pc};font-size:22px;font-family:'DM Mono',monospace;font-weight:700;text-align:center;outline:none;padding:2px 0"/>
               <span style="font-size:12px;color:var(--muted)">kcal</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
-              ${NutritionInput({ label: 'Protein', value: editProtein, onInput: setEditProtein, color: 'var(--mint)', field: 'protein' })}
-              ${NutritionInput({ label: 'Carbs', value: editCarbs, onInput: setEditCarbs, color: 'var(--sky)', field: 'carbs' })}
-              ${NutritionInput({ label: 'Fat', value: editFat, onInput: setEditFat, color: 'var(--peach)', field: 'fat' })}
-              ${NutritionInput({ label: 'Fiber', value: editFiber, onInput: setEditFiber, color: 'var(--plum)', field: 'fiber' })}
+              ${NutritionInput({ label: 'Protein', value: editProtein, inputRef: editProteinRef, color: 'var(--mint)', field: 'protein' })}
+              ${NutritionInput({ label: 'Carbs', value: editCarbs, inputRef: editCarbsRef, color: 'var(--sky)', field: 'carbs' })}
+              ${NutritionInput({ label: 'Fat', value: editFat, inputRef: editFatRef, color: 'var(--peach)', field: 'fat' })}
+              ${NutritionInput({ label: 'Fiber', value: editFiber, inputRef: editFiberRef, color: 'var(--plum)', field: 'fiber' })}
             </div>
             ${nutritionIsEdited ? html`
               <div style="font-size:10px;color:var(--plum);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">
@@ -1708,20 +1730,27 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
   const [oaiKey,       setOaiKey]       = useState(settings.oaiKey       || '');
   const [theme,        setTheme]        = useState(settings.theme        || 'auto');
   const savedTargets = normalizeTargets(settings);
-  const [targetCal,     setTargetCal]     = useState(String(Math.round(savedTargets.calories)));
-  const [targetProtein, setTargetProtein] = useState(String(Math.round(savedTargets.protein)));
-  const [targetCarbs,   setTargetCarbs]   = useState(String(Math.round(savedTargets.carbs)));
-  const [targetFat,     setTargetFat]     = useState(String(Math.round(savedTargets.fat)));
+  const targetCalInitial = String(Math.round(savedTargets.calories));
+  const targetProteinInitial = String(Math.round(savedTargets.protein));
+  const targetCarbsInitial = String(Math.round(savedTargets.carbs));
+  const targetFatInitial = String(Math.round(savedTargets.fat));
+  const targetCalRef = useRef(null);
+  const targetProteinRef = useRef(null);
+  const targetCarbsRef = useRef(null);
+  const targetFatRef = useRef(null);
   const [weightUnit,   setWeightUnit]   = useState(settings.weightUnit || 'kg');
-  const [goalWeight,   setGoalWeight]   = useState(settings.goalWeight != null ? String(settings.goalWeight) : '');
+  const goalWeightInitial = settings.goalWeight != null ? String(settings.goalWeight) : '';
+  const goalWeightRef = useRef(null);
   const latestWeight = weights
     .filter(w => w.unit === weightUnit && Number.isFinite(Number(w.weight)))
     .sort((a, b) => String(b.timestamp || b.date || '').localeCompare(String(a.timestamp || a.date || '')))[0];
   const savedProfile = settings.macroProfile || {};
   const [macroHelpOpen, setMacroHelpOpen] = useState(Boolean(savedProfile.gender || savedProfile.age || savedProfile.activityLevel));
   const [macroGender, setMacroGender] = useState(savedProfile.gender || '');
-  const [macroWeight, setMacroWeight] = useState(savedProfile.weight != null ? String(savedProfile.weight) : latestWeight ? String(latestWeight.weight) : '');
-  const [macroAge, setMacroAge] = useState(savedProfile.age != null ? String(savedProfile.age) : '');
+  const macroWeightInitial = savedProfile.weight != null ? String(savedProfile.weight) : latestWeight ? String(latestWeight.weight) : '';
+  const macroAgeInitial = savedProfile.age != null ? String(savedProfile.age) : '';
+  const macroWeightRef = useRef(null);
+  const macroAgeRef = useRef(null);
   const [macroActivity, setMacroActivity] = useState(savedProfile.activityLevel || 'moderate');
   const [macroGoal, setMacroGoal] = useState(savedProfile.goal || 'maintain');
   const [macroResult, setMacroResult] = useState(settings.macroRecommendation || null);
@@ -1731,6 +1760,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
   const [importMsg,    setImportMsg]    = useState('');
   const [pendingImport, setPendingImport] = useState(null);
   const importRef = useRef();
+  const inputValue = (ref, fallback = '') => ref.current ? ref.current.value : fallback;
 
   useEffect(() => {
     // If a manual key is removed while selected, fall back to the server provider.
@@ -1741,26 +1771,27 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
 
   const currentMacroProfile = () => ({
     gender: macroGender,
-    weight: macroWeight.trim() ? asPositiveNumber(macroWeight, 0) || null : null,
+    weight: inputValue(macroWeightRef, macroWeightInitial).trim() ? asPositiveNumber(inputValue(macroWeightRef, macroWeightInitial), 0) || null : null,
     weightUnit,
-    age: macroAge.trim() ? Math.round(asPositiveNumber(macroAge, 0) || 0) || null : null,
+    age: inputValue(macroAgeRef, macroAgeInitial).trim() ? Math.round(asPositiveNumber(inputValue(macroAgeRef, macroAgeInitial), 0) || 0) || null : null,
     activityLevel: macroActivity,
     goal: macroGoal,
-    updatedAt: (macroGender || macroWeight.trim() || macroAge.trim()) ? new Date().toISOString() : null,
+    updatedAt: (macroGender || inputValue(macroWeightRef, macroWeightInitial).trim() || inputValue(macroAgeRef, macroAgeInitial).trim()) ? new Date().toISOString() : null,
   });
 
   const buildSettings = (targetOverrides = {}, recommendation = macroResult, profile = currentMacroProfile()) => {
-    const goalNum = goalWeight.trim() ? asPositiveNumber(goalWeight, 0) || null : null;
+    const goalWeightValue = inputValue(goalWeightRef, goalWeightInitial);
+    const goalNum = goalWeightValue.trim() ? asPositiveNumber(goalWeightValue, 0) || null : null;
     return {
       provider, anthropicKey, oaiKey, theme, weightUnit,
       goalWeight: goalNum,
       macroProfile: profile,
       macroRecommendation: recommendation,
       targets: {
-        calories: asPositiveNumber(targetOverrides.calories ?? targetCal, DEFAULT_TARGETS.calories),
-        protein:  asPositiveNumber(targetOverrides.protein ?? targetProtein, DEFAULT_TARGETS.protein),
-        carbs:    asPositiveNumber(targetOverrides.carbs ?? targetCarbs, DEFAULT_TARGETS.carbs),
-        fat:      asPositiveNumber(targetOverrides.fat ?? targetFat, DEFAULT_TARGETS.fat),
+        calories: asPositiveNumber(targetOverrides.calories ?? inputValue(targetCalRef, targetCalInitial), DEFAULT_TARGETS.calories),
+        protein:  asPositiveNumber(targetOverrides.protein ?? inputValue(targetProteinRef, targetProteinInitial), DEFAULT_TARGETS.protein),
+        carbs:    asPositiveNumber(targetOverrides.carbs ?? inputValue(targetCarbsRef, targetCarbsInitial), DEFAULT_TARGETS.carbs),
+        fat:      asPositiveNumber(targetOverrides.fat ?? inputValue(targetFatRef, targetFatInitial), DEFAULT_TARGETS.fat),
       },
     };
   };
@@ -1814,11 +1845,11 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
   const activeColor = providerColor(provider);
 
   // Shared target editor used for calories and macro goals.
-  const TargetInput = ({ label, value, onInput, color, unit }) => html`
+  const TargetInput = ({ label, value, inputRef, color, unit }) => html`
     <label style="display:block">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">${label}</div>
       <div style="display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:0 12px">
-        <input type="number" min="1" value=${value} onInput=${e => onInput(e.target.value)}
+        <input ref=${inputRef} type="number" min="1" defaultValue=${value}
           style="width:100%;background:transparent;border:none;color:${color};font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
         <span style="font-size:11px;color:var(--muted)">${unit}</span>
       </div>
@@ -1843,8 +1874,8 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
   });
 
   const chooseTargets = async () => {
-    const weight = Number(macroWeight);
-    const age = Number(macroAge);
+    const weight = Number(inputValue(macroWeightRef, macroWeightInitial));
+    const age = Number(inputValue(macroAgeRef, macroAgeInitial));
     if (!macroGender) { setMacroErr('Choose a gender.'); return; }
     if (!Number.isFinite(weight) || weight <= 0) { setMacroErr('Enter a valid weight.'); return; }
     if (!Number.isFinite(age) || age < 7 || age > 100) { setMacroErr('Enter an age from 7 to 100.'); return; }
@@ -1865,10 +1896,10 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
         : await callOpenAITargets(profile, provider === 'openai' ? oaiKey.trim() : '');
       const parsed = JSON.parse(String(raw).replace(/^```(?:json)?|```$/g, '').trim());
       const result = cleanTargetResult(parsed);
-      setTargetCal(String(result.calories));
-      setTargetProtein(String(result.protein));
-      setTargetCarbs(String(result.carbs));
-      setTargetFat(String(result.fat));
+      if (targetCalRef.current) targetCalRef.current.value = String(result.calories);
+      if (targetProteinRef.current) targetProteinRef.current.value = String(result.protein);
+      if (targetCarbsRef.current) targetCarbsRef.current.value = String(result.carbs);
+      if (targetFatRef.current) targetFatRef.current.value = String(result.fat);
       setMacroResult(result);
       onApply?.(buildSettings(result, result, { ...profile, updatedAt: new Date().toISOString() }));
       trackEvent('macro_targets_generated', {
@@ -1993,7 +2024,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
               <label style="display:block">
                 <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Weight</div>
                 <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 12px">
-                  <input type="number" min="1" step="0.1" value=${macroWeight} onInput=${e => setMacroWeight(e.target.value)}
+                  <input ref=${macroWeightRef} type="number" min="1" step="0.1" defaultValue=${macroWeightInitial}
                     placeholder=${latestWeight ? String(latestWeight.weight) : '0.0'}
                     style="width:100%;background:transparent;border:none;color:var(--mint);font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
                   <span style="font-size:11px;color:var(--muted)">${weightUnit}</span>
@@ -2002,7 +2033,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
               <label style="display:block">
                 <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Age</div>
                 <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 12px">
-                  <input type="number" min="7" max="100" step="1" value=${macroAge} onInput=${e => setMacroAge(e.target.value)}
+                  <input ref=${macroAgeRef} type="number" min="7" max="100" step="1" defaultValue=${macroAgeInitial}
                     placeholder="Years"
                     style="width:100%;background:transparent;border:none;color:var(--accent);font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
                 </div>
@@ -2056,10 +2087,10 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
         <!-- Targets -->
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Daily Targets</div>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:22px">
-          ${TargetInput({ label: 'Calories', value: targetCal, onInput: setTargetCal, color: 'var(--accent)', unit: 'kcal' })}
-          ${TargetInput({ label: 'Protein', value: targetProtein, onInput: setTargetProtein, color: 'var(--mint)', unit: 'g' })}
-          ${TargetInput({ label: 'Carbs', value: targetCarbs, onInput: setTargetCarbs, color: 'var(--sky)', unit: 'g' })}
-          ${TargetInput({ label: 'Fat', value: targetFat, onInput: setTargetFat, color: 'var(--peach)', unit: 'g' })}
+          ${TargetInput({ label: 'Calories', value: targetCalInitial, inputRef: targetCalRef, color: 'var(--accent)', unit: 'kcal' })}
+          ${TargetInput({ label: 'Protein', value: targetProteinInitial, inputRef: targetProteinRef, color: 'var(--mint)', unit: 'g' })}
+          ${TargetInput({ label: 'Carbs', value: targetCarbsInitial, inputRef: targetCarbsRef, color: 'var(--sky)', unit: 'g' })}
+          ${TargetInput({ label: 'Fat', value: targetFatInitial, inputRef: targetFatRef, color: 'var(--peach)', unit: 'g' })}
         </div>
 
         <!-- Weight unit -->
@@ -2071,7 +2102,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
 
         <!-- Goal weight -->
         <div style="margin-bottom:22px">
-          ${TargetInput({ label: 'Goal Weight', value: goalWeight, onInput: setGoalWeight, color: 'var(--mint)', unit: weightUnit })}
+          ${TargetInput({ label: 'Goal Weight', value: goalWeightInitial, inputRef: goalWeightRef, color: 'var(--mint)', unit: weightUnit })}
           <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">Optional. Shown as a reference line on the weight chart.</div>
         </div>
 
