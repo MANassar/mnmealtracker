@@ -484,7 +484,7 @@ Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. 
 const TARGETS_PROMPT = profile =>
 `You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:
 ${JSON.stringify(profile)}
-Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR, adjust by activity level, and choose a conservative target suitable for general weight management unless the profile explicitly asks otherwise. Do not recommend unsafe calorie restriction. Protein should be appropriate for body weight and activity; carbs and fat should be practical and sustainable.
+Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR and adjust by activity level. Always assume the user's body-composition goal is to increase muscle mass, even when their scale-weight goal is lose, maintain, or gain. Use the selected goal only to choose the calorie strategy: a modest deficit for lose, near maintenance for maintain, and a modest surplus for gain, while keeping protein high enough to support muscle gain or retention and keeping training fuel practical. Do not recommend unsafe calorie restriction. Carbs and fat should be practical and sustainable.
 Return ONLY a raw JSON object — no markdown:
 {"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
 Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.`;
@@ -2056,10 +2056,10 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
         <!-- Targets -->
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Daily Targets</div>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:22px">
-          <${TargetInput} label="Calories" value=${targetCal} onInput=${setTargetCal} color="var(--accent)" unit="kcal"/>
-          <${TargetInput} label="Protein"  value=${targetProtein} onInput=${setTargetProtein} color="var(--mint)" unit="g"/>
-          <${TargetInput} label="Carbs"    value=${targetCarbs} onInput=${setTargetCarbs} color="var(--sky)" unit="g"/>
-          <${TargetInput} label="Fat"      value=${targetFat} onInput=${setTargetFat} color="var(--peach)" unit="g"/>
+          ${TargetInput({ label: 'Calories', value: targetCal, onInput: setTargetCal, color: 'var(--accent)', unit: 'kcal' })}
+          ${TargetInput({ label: 'Protein', value: targetProtein, onInput: setTargetProtein, color: 'var(--mint)', unit: 'g' })}
+          ${TargetInput({ label: 'Carbs', value: targetCarbs, onInput: setTargetCarbs, color: 'var(--sky)', unit: 'g' })}
+          ${TargetInput({ label: 'Fat', value: targetFat, onInput: setTargetFat, color: 'var(--peach)', unit: 'g' })}
         </div>
 
         <!-- Weight unit -->
@@ -2071,7 +2071,7 @@ function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onEx
 
         <!-- Goal weight -->
         <div style="margin-bottom:22px">
-          <${TargetInput} label="Goal Weight" value=${goalWeight} onInput=${setGoalWeight} color="var(--mint)" unit=${weightUnit}/>
+          ${TargetInput({ label: 'Goal Weight', value: goalWeight, onInput: setGoalWeight, color: 'var(--mint)', unit: weightUnit })}
           <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">Optional. Shown as a reference line on the weight chart.</div>
         </div>
 

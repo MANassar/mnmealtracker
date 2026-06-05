@@ -59,7 +59,7 @@ Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. 
 const targetPrompt = profile =>
 `You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:
 ${JSON.stringify(profile)}
-Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR, adjust by activity level, and choose a conservative target suitable for general weight management unless the profile explicitly asks otherwise. Do not recommend unsafe calorie restriction. Protein should be appropriate for body weight and activity; carbs and fat should be practical and sustainable.
+Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR and adjust by activity level. Always assume the user's body-composition goal is to increase muscle mass, even when their scale-weight goal is lose, maintain, or gain. Use the selected goal only to choose the calorie strategy: a modest deficit for lose, near maintenance for maintain, and a modest surplus for gain, while keeping protein high enough to support muscle gain or retention and keeping training fuel practical. Do not recommend unsafe calorie restriction. Carbs and fat should be practical and sustainable.
 Return ONLY a raw JSON object — no markdown:
 {"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
 Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.`;
