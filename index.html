@@ -481,6 +481,14 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0},{"text":"use 120g grilled chicken breast instead of 120g fried chicken thigh","caloriesDelta":-80,"proteinDelta":6.0,"carbsDelta":0.0,"fatDelta":-9.0,"fiberDelta":0.0}],"calorieSavings":100}
 Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Each suggestion must be concrete: name the original item, the replacement or reduction, and the specific quantity. Each suggestion must include estimated calorie and macro deltas versus the original item. Do not suggest unsafe restriction.`;
 
+const TARGETS_PROMPT = profile =>
+`You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:
+${JSON.stringify(profile)}
+Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR, adjust by activity level, and choose a conservative target suitable for general weight management unless the profile explicitly asks otherwise. Do not recommend unsafe calorie restriction. Protein should be appropriate for body weight and activity; carbs and fat should be practical and sustainable.
+Return ONLY a raw JSON object — no markdown:
+{"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
+Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.`;
+
 async function callAnthropic(img, desc, key) {
   // Anthropic manual mode uses the user's own key directly from the browser.
   const content = [
@@ -518,6 +526,25 @@ async function callAnthropicOptimization(analysis, desc, key) {
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514', max_tokens: 1000,
       messages: [{ role: 'user', content: [{ type: 'text', text: OPTIMIZE_PROMPT(analysis, desc) }] }],
+    }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+  return (d.content || []).map(b => b.text || '').join('');
+}
+
+async function callAnthropicTargets(profile, key) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514', max_tokens: 900,
+      messages: [{ role: 'user', content: [{ type: 'text', text: TARGETS_PROMPT(profile) }] }],
     }),
   });
   const d = await res.json();
@@ -577,6 +604,31 @@ async function callOpenAIOptimization(analysis, desc, key) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
     body: JSON.stringify({ mode: 'optimize', analysis, desc }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d.text || '';
+}
+
+async function callOpenAITargets(profile, key) {
+  if (key) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'gpt-4o', max_tokens: 900,
+        messages: [{ role: 'user', content: [{ type: 'text', text: TARGETS_PROMPT(profile) }] }],
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+    return d.choices?.[0]?.message?.content || '';
+  }
+
+  const res = await fetch('/.netlify/functions/analyze-meal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
+    body: JSON.stringify({ mode: 'targets', profile }),
   });
   const d = await res.json();
   if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
@@ -1649,7 +1701,7 @@ function HistView({ meals, weights = [], targets, onDelete, onEdit, onLogAgain, 
 }
 
 /* ── Settings View ──────────────────────────────────────── */
-function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedback }) {
+function SettView({ settings, meals, weights = [], onSave, onApply, onBack, onExport, onImport, onFeedback }) {
   // Settings edits are staged locally until Save so Back can discard theme changes.
   const [provider,     setProvider]     = useState(settings.provider     || 'server');
   const [anthropicKey, setAnthropicKey] = useState(settings.anthropicKey || '');
@@ -1662,6 +1714,19 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
   const [targetFat,     setTargetFat]     = useState(String(Math.round(savedTargets.fat)));
   const [weightUnit,   setWeightUnit]   = useState(settings.weightUnit || 'kg');
   const [goalWeight,   setGoalWeight]   = useState(settings.goalWeight != null ? String(settings.goalWeight) : '');
+  const latestWeight = weights
+    .filter(w => w.unit === weightUnit && Number.isFinite(Number(w.weight)))
+    .sort((a, b) => String(b.timestamp || b.date || '').localeCompare(String(a.timestamp || a.date || '')))[0];
+  const savedProfile = settings.macroProfile || {};
+  const [macroHelpOpen, setMacroHelpOpen] = useState(Boolean(savedProfile.gender || savedProfile.age || savedProfile.activityLevel));
+  const [macroGender, setMacroGender] = useState(savedProfile.gender || '');
+  const [macroWeight, setMacroWeight] = useState(savedProfile.weight != null ? String(savedProfile.weight) : latestWeight ? String(latestWeight.weight) : '');
+  const [macroAge, setMacroAge] = useState(savedProfile.age != null ? String(savedProfile.age) : '');
+  const [macroActivity, setMacroActivity] = useState(savedProfile.activityLevel || 'moderate');
+  const [macroGoal, setMacroGoal] = useState(savedProfile.goal || 'maintain');
+  const [macroResult, setMacroResult] = useState(settings.macroRecommendation || null);
+  const [macroLoading, setMacroLoading] = useState(false);
+  const [macroErr, setMacroErr] = useState('');
   const [saved,        setSaved]        = useState(false);
   const [importMsg,    setImportMsg]    = useState('');
   const [pendingImport, setPendingImport] = useState(null);
@@ -1674,19 +1739,35 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
     }
   }, [provider, anthropicKey, oaiKey]);
 
-  const save = () => {
-    // Normalize numeric targets on save rather than on every keystroke.
+  const currentMacroProfile = () => ({
+    gender: macroGender,
+    weight: macroWeight.trim() ? asPositiveNumber(macroWeight, 0) || null : null,
+    weightUnit,
+    age: macroAge.trim() ? Math.round(asPositiveNumber(macroAge, 0) || 0) || null : null,
+    activityLevel: macroActivity,
+    goal: macroGoal,
+    updatedAt: (macroGender || macroWeight.trim() || macroAge.trim()) ? new Date().toISOString() : null,
+  });
+
+  const buildSettings = (targetOverrides = {}, recommendation = macroResult, profile = currentMacroProfile()) => {
     const goalNum = goalWeight.trim() ? asPositiveNumber(goalWeight, 0) || null : null;
-    onSave({
+    return {
       provider, anthropicKey, oaiKey, theme, weightUnit,
       goalWeight: goalNum,
+      macroProfile: profile,
+      macroRecommendation: recommendation,
       targets: {
-        calories: asPositiveNumber(targetCal, DEFAULT_TARGETS.calories),
-        protein:  asPositiveNumber(targetProtein, DEFAULT_TARGETS.protein),
-        carbs:    asPositiveNumber(targetCarbs, DEFAULT_TARGETS.carbs),
-        fat:      asPositiveNumber(targetFat, DEFAULT_TARGETS.fat),
+        calories: asPositiveNumber(targetOverrides.calories ?? targetCal, DEFAULT_TARGETS.calories),
+        protein:  asPositiveNumber(targetOverrides.protein ?? targetProtein, DEFAULT_TARGETS.protein),
+        carbs:    asPositiveNumber(targetOverrides.carbs ?? targetCarbs, DEFAULT_TARGETS.carbs),
+        fat:      asPositiveNumber(targetOverrides.fat ?? targetFat, DEFAULT_TARGETS.fat),
       },
-    });
+    };
+  };
+
+  const save = () => {
+    // Normalize numeric targets on save rather than on every keystroke.
+    onSave(buildSettings());
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
@@ -1742,6 +1823,66 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
         <span style="font-size:11px;color:var(--muted)">${unit}</span>
       </div>
     </label>`;
+
+  const ChoiceButton = ({ active, label, sub, onClick }) => html`
+    <button onClick=${onClick}
+      style="text-align:left;background:${active ? 'rgba(116,170,156,.12)' : 'var(--card)'};border:1px solid ${active ? 'var(--oai)' : 'var(--border)'};border-radius:10px;padding:11px 12px;color:var(--text);cursor:pointer;min-height:48px">
+      <div style="font-size:13px;font-weight:700;color:${active ? 'var(--oai)' : 'var(--text)'}">${label}</div>
+      ${sub ? html`<div style="font-size:10px;color:var(--muted);line-height:1.35;margin-top:2px">${sub}</div>` : null}
+    </button>`;
+
+  const cleanTargetResult = result => ({
+    calories: Math.round(asPositiveNumber(result?.calories, DEFAULT_TARGETS.calories)),
+    protein: Math.round(asPositiveNumber(result?.protein, DEFAULT_TARGETS.protein)),
+    carbs: Math.round(asPositiveNumber(result?.carbs, DEFAULT_TARGETS.carbs)),
+    fat: Math.round(asPositiveNumber(result?.fat, DEFAULT_TARGETS.fat)),
+    method: String(result?.method || '').slice(0, 500),
+    explanation: String(result?.explanation || '').slice(0, 900),
+    cautions: String(result?.cautions || 'AI-generated nutrition guidance can be wrong. Use it as a starting point and consult a qualified professional for medical or performance needs.').slice(0, 700),
+    createdAt: new Date().toISOString(),
+  });
+
+  const chooseTargets = async () => {
+    const weight = Number(macroWeight);
+    const age = Number(macroAge);
+    if (!macroGender) { setMacroErr('Choose a gender.'); return; }
+    if (!Number.isFinite(weight) || weight <= 0) { setMacroErr('Enter a valid weight.'); return; }
+    if (!Number.isFinite(age) || age < 13 || age > 100) { setMacroErr('Enter an age from 13 to 100.'); return; }
+
+    const profile = {
+      gender: macroGender,
+      weight,
+      weightUnit,
+      age: Math.round(age),
+      activityLevel: macroActivity,
+      goal: macroGoal,
+    };
+
+    setMacroLoading(true); setMacroErr('');
+    try {
+      const raw = provider === 'anthropic'
+        ? await callAnthropicTargets(profile, anthropicKey.trim())
+        : await callOpenAITargets(profile, provider === 'openai' ? oaiKey.trim() : '');
+      const parsed = JSON.parse(String(raw).replace(/^```(?:json)?|```$/g, '').trim());
+      const result = cleanTargetResult(parsed);
+      setTargetCal(String(result.calories));
+      setTargetProtein(String(result.protein));
+      setTargetCarbs(String(result.carbs));
+      setTargetFat(String(result.fat));
+      setMacroResult(result);
+      onApply?.(buildSettings(result, result, { ...profile, updatedAt: new Date().toISOString() }));
+      trackEvent('macro_targets_generated', {
+        provider,
+        activity_level: macroActivity,
+        goal: macroGoal,
+        calories_bucket: valueBucket(result.calories, 100),
+      });
+    } catch (error) {
+      setMacroErr(`Could not choose targets: ${error.message}`);
+    } finally {
+      setMacroLoading(false);
+    }
+  };
 
   const finishImport = mode => {
     if (!pendingImport) return;
@@ -1821,6 +1962,95 @@ function SettView({ settings, meals, onSave, onBack, onExport, onImport, onFeedb
           <${ThemeTab} id="auto"  label="Auto"/>
           <${ThemeTab} id="light" label="Light"/>
           <${ThemeTab} id="dark"  label="Dark"/>
+        </div>
+
+        <!-- Macro target helper -->
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:18px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:${macroHelpOpen ? '14px' : '0'}">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px">Daily Targets</div>
+              <div style="font-size:15px;color:var(--text);font-weight:700">Macro and calorie setup</div>
+              <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:4px">Use AI to estimate targets from your body weight, age, activity, and goal.</div>
+            </div>
+            <button onClick=${() => setMacroHelpOpen(!macroHelpOpen)}
+              style="background:var(--oai);border:none;color:#0c1a10;border-radius:11px;padding:0 13px;min-height:42px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap">
+              ${macroHelpOpen ? 'Hide' : 'Help me choose'}
+            </button>
+          </div>
+
+          ${macroHelpOpen ? html`
+            <div style="font-size:11px;color:var(--muted);line-height:1.55;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:12px">
+              These details are saved with Settings, and AI-chosen targets are saved immediately after they are generated. AI-generated nutrition guidance can be wrong. Treat it as a starting point, especially if you have a medical condition, are pregnant, have a history of disordered eating, or train for performance.
+            </div>
+
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px">Gender</div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px">
+              <${ChoiceButton} active=${macroGender === 'female'} label="Female" onClick=${() => setMacroGender('female')}/>
+              <${ChoiceButton} active=${macroGender === 'male'} label="Male" onClick=${() => setMacroGender('male')}/>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px">
+              <label style="display:block">
+                <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Weight</div>
+                <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 12px">
+                  <input type="number" min="1" step="0.1" value=${macroWeight} onInput=${e => setMacroWeight(e.target.value)}
+                    placeholder=${latestWeight ? String(latestWeight.weight) : '0.0'}
+                    style="width:100%;background:transparent;border:none;color:var(--mint);font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
+                  <span style="font-size:11px;color:var(--muted)">${weightUnit}</span>
+                </div>
+              </label>
+              <label style="display:block">
+                <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">Age</div>
+                <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 12px">
+                  <input type="number" min="13" max="100" step="1" value=${macroAge} onInput=${e => setMacroAge(e.target.value)}
+                    placeholder="Years"
+                    style="width:100%;background:transparent;border:none;color:var(--accent);font-size:18px;font-family:'DM Mono',monospace;font-weight:700;outline:none;padding:12px 0"/>
+                </div>
+              </label>
+            </div>
+
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px">Activity level</div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px">
+              <${ChoiceButton} active=${macroActivity === 'sedentary'} label="Sedentary" sub="Mostly seated" onClick=${() => setMacroActivity('sedentary')}/>
+              <${ChoiceButton} active=${macroActivity === 'light'} label="Light" sub="1-3 workouts/week" onClick=${() => setMacroActivity('light')}/>
+              <${ChoiceButton} active=${macroActivity === 'moderate'} label="Moderate" sub="3-5 workouts/week" onClick=${() => setMacroActivity('moderate')}/>
+              <${ChoiceButton} active=${macroActivity === 'very_active'} label="Very active" sub="Hard training most days" onClick=${() => setMacroActivity('very_active')}/>
+            </div>
+
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:7px">Goal</div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px">
+              <${ChoiceButton} active=${macroGoal === 'lose'} label="Lose" onClick=${() => setMacroGoal('lose')}/>
+              <${ChoiceButton} active=${macroGoal === 'maintain'} label="Maintain" onClick=${() => setMacroGoal('maintain')}/>
+              <${ChoiceButton} active=${macroGoal === 'gain'} label="Gain" onClick=${() => setMacroGoal('gain')}/>
+            </div>
+
+            <button disabled=${macroLoading} onClick=${chooseTargets}
+              style="width:100%;background:${macroLoading ? 'var(--muted)' : 'var(--oai)'};border:none;color:#0c1a10;border-radius:12px;padding:14px;font-size:14px;font-weight:800;cursor:${macroLoading ? 'wait' : 'pointer'};margin-bottom:${macroResult || macroErr ? '12px' : '0'}">
+              ${macroLoading ? 'Choosing targets...' : 'Choose my targets'}
+            </button>
+
+            ${macroErr ? html`<div style="font-size:12px;color:var(--danger);line-height:1.5;margin-bottom:12px">${macroErr}</div>` : null}
+
+            ${macroResult ? html`
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;line-height:1.55">
+                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px">
+                  ${[
+                    ['Cal', macroResult.calories, 'kcal', 'var(--accent)'],
+                    ['Protein', macroResult.protein, 'g', 'var(--mint)'],
+                    ['Carbs', macroResult.carbs, 'g', 'var(--sky)'],
+                    ['Fat', macroResult.fat, 'g', 'var(--peach)'],
+                  ].map(([label, value, unit, color]) => html`
+                    <div style="background:var(--card);border:1px solid var(--border);border-radius:9px;padding:8px;text-align:center">
+                      <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${label}</div>
+                      <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:800;color:${color};margin-top:3px">${value}</div>
+                      <div style="font-size:9px;color:var(--muted)">${unit}</div>
+                    </div>`)}
+                </div>
+                ${macroResult.method ? html`<div style="font-size:11px;color:var(--muted);margin-bottom:6px">${macroResult.method}</div>` : null}
+                ${macroResult.explanation ? html`<div style="font-size:12px;color:var(--text);margin-bottom:6px">${macroResult.explanation}</div>` : null}
+                <div style="font-size:11px;color:var(--muted)">${macroResult.cautions}</div>
+              </div>` : null}
+          ` : null}
         </div>
 
         <!-- Targets -->
@@ -2189,7 +2419,7 @@ function App() {
         </div>` : null}
       <div style="flex:1;overflow:hidden;min-height:0;padding-bottom:${view !== 'add' && view !== 'settings' ? '0' : '0'}">
         ${view === 'add'      ? html`<${AddView} key=${editingMeal ? `edit-${editingMeal.id}` : repeatMeal ? `repeat-${repeatMeal.id}` : 'new'} settings=${settings} meals=${meals} meal=${editingMeal} repeatMeal=${repeatMeal} onSave=${saveMeal}  onCancel=${() => { setEditingMeal(null); setRepeatMeal(null); setView(editingMeal || repeatMeal ? editReturnView : 'today'); }}/>` :
-          view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} onSave=${s => { updateSettings(s); setView('today'); }} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
+          view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} weights=${weights} onSave=${s => { updateSettings(s); setView('today'); }} onApply=${updateSettings} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} weights=${weights} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onLogAgain=${logMealAgain} onDeleteWeight=${deleteWeight} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
           view === 'weight'   ? html`<${WeightView} weights=${weights} settings=${settings} onAddWeight=${addWeight} onDeleteWeight=${deleteWeight} onSetGoal=${setGoalWeight} onSettings=${() => setView('settings')}/>` :
                                 html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}

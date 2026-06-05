@@ -56,6 +56,14 @@ Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0},{"text":"use 120g grilled chicken breast instead of 120g fried chicken thigh","caloriesDelta":-80,"proteinDelta":6.0,"carbsDelta":0.0,"fatDelta":-9.0,"fiberDelta":0.0}],"calorieSavings":100}
 Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Each suggestion must be concrete: name the original item, the replacement or reduction, and the specific quantity. Each suggestion must include estimated calorie and macro deltas versus the original item. Do not suggest unsafe restriction.`;
 
+const targetPrompt = profile =>
+`You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:
+${JSON.stringify(profile)}
+Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR, adjust by activity level, and choose a conservative target suitable for general weight management unless the profile explicitly asks otherwise. Do not recommend unsafe calorie restriction. Protein should be appropriate for body weight and activity; carbs and fat should be practical and sustainable.
+Return ONLY a raw JSON object — no markdown:
+{"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
+Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.`;
+
 exports.handler = async event => {
   // Browsers send OPTIONS before custom cross-origin POST requests.
   if (event.httpMethod === 'OPTIONS') return json(event, 204, {});
@@ -91,15 +99,18 @@ exports.handler = async event => {
     return json(event, 400, { error: 'Invalid JSON body.' });
   }
 
-  const mode = payload.mode === 'optimize' ? 'optimize' : 'analyze';
+  const mode = payload.mode === 'optimize' ? 'optimize' : payload.mode === 'targets' ? 'targets' : 'analyze';
   const img = payload.img || null;
   const desc = String(payload.desc || '').trim();
   const analysis = payload.analysis && typeof payload.analysis === 'object' ? payload.analysis : null;
+  const profile = payload.profile && typeof payload.profile === 'object' ? payload.profile : null;
   // Cheap validation happens before any paid OpenAI call.
   if (mode === 'analyze' && !img && !desc) return json(event, 400, { error: 'Please provide an image, a description, or both.' });
   if (mode === 'optimize' && !analysis) return json(event, 400, { error: 'Please provide an analysis to optimize.' });
+  if (mode === 'targets' && !profile) return json(event, 400, { error: 'Please provide a profile.' });
   if (desc.length > 2000) return json(event, 413, { error: 'Description is too long.' });
   if (analysis && JSON.stringify(analysis).length > 5000) return json(event, 413, { error: 'Analysis is too large.' });
+  if (profile && JSON.stringify(profile).length > 3000) return json(event, 413, { error: 'Profile is too large.' });
   if (img?.b64 && img.b64.length > 7_000_000) return json(event, 413, { error: 'Image is too large.' });
   if (img?.type && !['image/jpeg', 'image/png', 'image/webp'].includes(img.type)) {
     return json(event, 415, { error: 'Unsupported image type.' });
@@ -110,7 +121,7 @@ exports.handler = async event => {
     ...(mode === 'analyze' && img?.b64 && img?.type
       ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }]
       : []),
-    { type: 'text', text: mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
+    { type: 'text', text: mode === 'targets' ? targetPrompt(profile) : mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
   ];
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
