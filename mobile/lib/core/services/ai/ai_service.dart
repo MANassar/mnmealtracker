@@ -30,6 +30,13 @@ String _optimizePrompt(Map<String, dynamic> analysis, String desc) =>
     '{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0}],"calorieSavings":100}\n'
     'Calories in kcal. Macros in grams. Keep protein high. Each suggestion must name the original item, the replacement, and specific quantities.';
 
+String _targetsPrompt(MacroProfile profile) =>
+    'You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:\n'
+    '${jsonEncode(profile.toJson())}\n'
+    'Return ONLY a raw JSON object — no markdown, no explanation:\n'
+    '{"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
+    'Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.';
+
 class AiService {
   final Dio _dio =
       Dio(BaseOptions(connectTimeout: 30000, receiveTimeout: 60000));
@@ -102,6 +109,25 @@ class AiService {
     }
   }
 
+  Future<MacroRecommendation> chooseTargets({
+    required AppSettings settings,
+    required MacroProfile profile,
+  }) async {
+    final rawText = await _callProvider(
+      settings: settings,
+      mode: 'targets',
+      profile: profile,
+    );
+
+    try {
+      return MacroRecommendation.fromJson(_parseJson(rawText));
+    } on FormatException {
+      throw const AiServiceException(
+        'The AI response was not valid target data. Try again in a moment.',
+      );
+    }
+  }
+
   Future<String> _callProvider({
     required AppSettings settings,
     required String mode,
@@ -109,6 +135,7 @@ class AiService {
     String? mimeType,
     String description = '',
     Map<String, dynamic>? analysis,
+    MacroProfile? profile,
   }) async {
     try {
       switch (settings.provider) {
@@ -120,6 +147,7 @@ class AiService {
             mimeType: mimeType,
             description: description,
             analysis: analysis,
+            profile: profile,
           );
         case 'anthropic':
           return _callAnthropic(
@@ -129,6 +157,7 @@ class AiService {
             mimeType: mimeType,
             description: description,
             analysis: analysis,
+            profile: profile,
           );
         case 'openai':
           return _callOpenAi(
@@ -138,6 +167,7 @@ class AiService {
             mimeType: mimeType,
             description: description,
             analysis: analysis,
+            profile: profile,
           );
         default:
           throw AiServiceException('Unknown provider: ${settings.provider}');
@@ -160,6 +190,7 @@ class AiService {
     String? mimeType,
     String description = '',
     Map<String, dynamic>? analysis,
+    MacroProfile? profile,
   }) async {
     final url = (settings.serverUrl?.isNotEmpty == true
             ? settings.serverUrl!
@@ -178,6 +209,7 @@ class AiService {
       body['img'] = {'b64': b64, 'type': mimeType};
     }
     if (analysis != null) body['analysis'] = analysis;
+    if (profile != null) body['profile'] = profile.toJson();
 
     final response = await _dio.post<Map<String, dynamic>>(
       url,
@@ -199,14 +231,17 @@ class AiService {
     String? mimeType,
     String description = '',
     Map<String, dynamic>? analysis,
+    MacroProfile? profile,
   }) async {
     if (apiKey.isEmpty) throw Exception('Anthropic API key is not set.');
 
-    final prompt = mode == 'optimize'
-        ? _optimizePrompt(analysis!, description)
-        : (description.isNotEmpty
-            ? _analyzePromptWithDesc(description)
-            : _analyzePrompt);
+    final prompt = mode == 'targets'
+        ? _targetsPrompt(profile!)
+        : mode == 'optimize'
+            ? _optimizePrompt(analysis!, description)
+            : (description.isNotEmpty
+                ? _analyzePromptWithDesc(description)
+                : _analyzePrompt);
 
     final contentList = <Map<String, dynamic>>[];
     if (b64 != null && mimeType != null && mode == 'analyze') {
@@ -256,14 +291,17 @@ class AiService {
     String? mimeType,
     String description = '',
     Map<String, dynamic>? analysis,
+    MacroProfile? profile,
   }) async {
     if (apiKey.isEmpty) throw Exception('OpenAI API key is not set.');
 
-    final prompt = mode == 'optimize'
-        ? _optimizePrompt(analysis!, description)
-        : (description.isNotEmpty
-            ? _analyzePromptWithDesc(description)
-            : _analyzePrompt);
+    final prompt = mode == 'targets'
+        ? _targetsPrompt(profile!)
+        : mode == 'optimize'
+            ? _optimizePrompt(analysis!, description)
+            : (description.isNotEmpty
+                ? _analyzePromptWithDesc(description)
+                : _analyzePrompt);
 
     final contentList = <Map<String, dynamic>>[];
     if (b64 != null && mimeType != null && mode == 'analyze') {

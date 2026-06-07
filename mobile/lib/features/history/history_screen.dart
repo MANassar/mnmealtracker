@@ -379,7 +379,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
       if (picked == null || picked.files.single.path == null) return;
 
       final raw = await File(picked.files.single.path!).readAsString();
-      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final parsed = jsonDecode(raw);
+      final json = parsed is List
+          ? <String, dynamic>{'meals': parsed}
+          : Map<String, dynamic>.from(parsed as Map);
       final result = await ref.read(mealsProvider.notifier).importJson(json);
 
       if (!context.mounted) return;
