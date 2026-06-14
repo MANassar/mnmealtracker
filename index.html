@@ -1858,6 +1858,7 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
   const [plan, setPlan] = useState(null);
   const [err, setErr] = useState('');
   const [logMsg, setLogMsg] = useState('');
+  const showLogMsg = msg => { setLogMsg(msg); setTimeout(() => setLogMsg(''), 2500); };
   const activeProvider =
     settings.provider === 'anthropic' && settings.anthropicKey?.trim() ? 'anthropic' :
     settings.provider === 'openai' && settings.oaiKey?.trim() ? 'openai' :
@@ -1959,7 +1960,7 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
       ${(item.steps || []).length ? html`<div style="font-size:12px;color:var(--muted);font-style:italic;line-height:1.35;margin-top:9px">${(item.steps || []).slice(0, 2).join(' ')}</div>` : null}
       <button onClick=${() => {
           onLogSuggestion(item, activeProvider);
-          setLogMsg(`Logged ${item.mealName || 'meal'}.`);
+          showLogMsg(`Logged ${item.mealName || 'meal'}.`);
         }}
         style="width:100%;background:var(--accent);border:none;color:#0c1a10;border-radius:10px;padding:12px;font-size:13px;font-weight:800;cursor:pointer;min-height:44px;margin-top:12px">
         Log this meal
@@ -2032,7 +2033,7 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
                         <span style="font-size:10px;color:var(--peach);font-family:'DM Mono',monospace">F${Math.round(m.fat || 0)}</span>
                       </div>
                       <div style="flex:1"/>
-                      <button onClick=${() => { onLogSuggestion(m, m.provider || activeProvider); setLogMsg('Logged ' + m.mealName + '.'); }}
+                      <button onClick=${() => { onLogSuggestion(m, m.provider || activeProvider); showLogMsg('Logged ' + m.mealName + '.'); }}
                         style="width:100%;background:var(--accent);border:none;color:#0c1a10;border-radius:8px;padding:8px 0;font-size:12px;font-weight:800;cursor:pointer;min-height:34px;margin-top:10px">
                         Log
                       </button>
@@ -2045,7 +2046,6 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
             ${status === 'loading' ? 'Thinking…' : 'Suggest my next meal'}
           </button>
           ${err ? html`<div style="background:rgba(212,106,90,.12);border:1px solid var(--danger);border-radius:10px;padding:12px;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.4">${err}</div>` : null}
-          ${logMsg ? html`<div style="background:rgba(109,184,122,.12);border:1px solid var(--mint);border-radius:10px;padding:12px;color:var(--mint);font-size:13px;margin-bottom:12px;line-height:1.4">${logMsg}</div>` : null}
           ${plan ? html`
             <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
               ${plan.summary ? html`<div style="font-size:13px;color:var(--text);line-height:1.4">${plan.summary}</div>` : null}
@@ -2060,6 +2060,10 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
           ` : null}
         </div>
       </div>
+      ${logMsg ? html`
+        <div style="position:fixed;bottom:calc(var(--tab-h) + var(--sab) + 16px);left:50%;transform:translateX(-50%);background:var(--mint);color:#0c1a10;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:700;z-index:50;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none">
+          ✓ ${logMsg}
+        </div>` : null}
     </div>`;
 }
 
