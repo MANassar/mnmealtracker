@@ -2001,6 +2001,45 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
                 ${label} · ${value}
               </div>`)}
           </div>
+          ${(() => {
+            if (remaining <= 0) return null;
+            const freq = {}, latest = {};
+            for (const m of [...meals].sort((a, b) => (b.timestamp || '') > (a.timestamp || '') ? 1 : -1)) {
+              const key = (m.mealName || '').toLowerCase().trim();
+              if (!key) continue;
+              freq[key] = (freq[key] || 0) + 1;
+              if (!latest[key]) latest[key] = m;
+            }
+            const candidates = Object.values(latest)
+              .filter(m => m.calories > 0 && m.calories <= remaining * 1.1)
+              .sort((a, b) => {
+                const af = freq[(a.mealName || '').toLowerCase().trim()] || 0;
+                const bf = freq[(b.mealName || '').toLowerCase().trim()] || 0;
+                return bf !== af ? bf - af : ((b.timestamp || '') > (a.timestamp || '') ? 1 : -1);
+              });
+            if (!candidates.length) return null;
+            return html`
+              <div style="margin-bottom:12px">
+                <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-bottom:8px">From your history</div>
+                <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none">
+                  ${candidates.map(m => html`
+                    <div style="flex:0 0 160px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;display:flex;flex-direction:column">
+                      <div style="font-family:'Playfair Display',serif;font-size:13px;color:var(--text);line-height:1.3;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;margin-bottom:4px">${m.mealName}</div>
+                      <div style="font-size:12px;color:var(--accent);font-family:'DM Mono',monospace;font-weight:800;margin-bottom:5px">${Math.round(m.calories)} kcal</div>
+                      <div style="display:flex;gap:6px">
+                        <span style="font-size:10px;color:var(--mint);font-family:'DM Mono',monospace">P${Math.round(m.protein || 0)}</span>
+                        <span style="font-size:10px;color:var(--sky);font-family:'DM Mono',monospace">C${Math.round(m.carbs || 0)}</span>
+                        <span style="font-size:10px;color:var(--peach);font-family:'DM Mono',monospace">F${Math.round(m.fat || 0)}</span>
+                      </div>
+                      <div style="flex:1"/>
+                      <button onClick=${() => { onLogSuggestion(m, m.provider || activeProvider); setLogMsg('Logged ' + m.mealName + '.'); }}
+                        style="width:100%;background:var(--accent);border:none;color:#0c1a10;border-radius:8px;padding:8px 0;font-size:12px;font-weight:800;cursor:pointer;min-height:34px;margin-top:10px">
+                        Log
+                      </button>
+                    </div>`)}
+                </div>
+              </div>`;
+          })()}
           <button onClick=${() => getSuggestions(false)} disabled=${status === 'loading'}
             style="width:100%;background:${status === 'loading' ? 'var(--muted)' : providerColor(activeProvider)};border:none;color:#0c1a10;border-radius:14px;padding:16px;font-size:15px;font-weight:800;cursor:${status === 'loading' ? 'wait' : 'pointer'};min-height:54px;margin-bottom:12px">
             ${status === 'loading' ? 'Thinking…' : 'Suggest my next meal'}

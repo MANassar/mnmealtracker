@@ -34,6 +34,13 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     final totals = _totals(todayMeals);
     final targets = _targets(settings);
 
+    final remaining = {
+      'calories': (targets['calories'] ?? 0) - (totals['calories'] ?? 0),
+      'protein': (targets['protein'] ?? 0) - (totals['protein'] ?? 0),
+      'carbs': (targets['carbs'] ?? 0) - (totals['carbs'] ?? 0),
+      'fat': (targets['fat'] ?? 0) - (totals['fat'] ?? 0),
+    };
+
     return Scaffold(
       backgroundColor: c.bg,
       body: Column(
@@ -88,6 +95,11 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
                   settings: settings,
                 ),
                 const SizedBox(height: 12),
+                _FamiliarMealsRow(
+                  meals: meals,
+                  remaining: remaining,
+                  onLog: _logHistoryMeal,
+                ),
                 ElevatedButton(
                   onPressed: _loading
                       ? null
@@ -243,6 +255,30 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
                 })
             .toList(),
     };
+  }
+
+  Future<void> _logHistoryMeal(Meal meal) async {
+    final now = DateTime.now();
+    final newMeal = Meal()
+      ..uuid = const Uuid().v4()
+      ..date = _todayStr(now)
+      ..timestamp = now.millisecondsSinceEpoch
+      ..mealName = meal.mealName
+      ..calories = meal.calories
+      ..protein = meal.protein
+      ..carbs = meal.carbs
+      ..fat = meal.fat
+      ..fiber = meal.fiber
+      ..provider = meal.provider
+      ..confidence = meal.confidence
+      ..portionNote = meal.portionNote
+      ..description = meal.description
+      ..ingredients = meal.ingredients;
+    await ref.read(mealsProvider.notifier).save(newMeal);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Logged ${meal.mealName}')),
+    );
   }
 
   Future<void> _logSuggestion(CoachSuggestion suggestion) async {
@@ -699,6 +735,153 @@ class _ErrorCard extends StatelessWidget {
         border: Border.all(color: c.danger),
       ),
       child: Text(message, style: TextStyle(color: c.danger, fontSize: 13)),
+    );
+  }
+}
+
+class _FamiliarMealsRow extends StatelessWidget {
+  final List<Meal> meals;
+  final Map<String, double> remaining;
+  final ValueChanged<Meal> onLog;
+
+  const _FamiliarMealsRow({
+    required this.meals,
+    required this.remaining,
+    required this.onLog,
+  });
+
+  List<Meal> _candidates() {
+    final remainingCals = remaining['calories'] ?? 0;
+    if (remainingCals <= 0) return [];
+
+    final freq = <String, int>{};
+    final latest = <String, Meal>{};
+    final sorted = [...meals]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    for (final meal in sorted) {
+      final key = meal.mealName.toLowerCase().trim();
+      if (key.isEmpty) continue;
+      freq[key] = (freq[key] ?? 0) + 1;
+      latest.putIfAbsent(key, () => meal);
+    }
+
+    return latest.values
+        .where((m) => m.calories > 0 && m.calories <= remainingCals * 1.1)
+        .toList()
+      ..sort((a, b) {
+        final af = freq[a.mealName.toLowerCase().trim()] ?? 0;
+        final bf = freq[b.mealName.toLowerCase().trim()] ?? 0;
+        return bf != af ? bf.compareTo(af) : b.timestamp.compareTo(a.timestamp);
+      });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final candidates = _candidates();
+    if (candidates.isEmpty) return const SizedBox.shrink();
+
+    final c = context.appColors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'FROM YOUR HISTORY',
+          style: TextStyle(color: c.muted, fontSize: 10, letterSpacing: 1.4),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 148,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: candidates.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (_, i) => _FamiliarCard(
+              candidates[i],
+              onLog: () => onLog(candidates[i]),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+}
+
+class _FamiliarCard extends StatelessWidget {
+  final Meal meal;
+  final VoidCallback onLog;
+
+  const _FamiliarCard(this.meal, {required this.onLog});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    return Container(
+      width: 165,
+      padding: const EdgeInsets.all(12),
+      decoration: _cardDecoration(c),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            meal.mealName,
+            style: TextStyle(
+              color: c.text,
+              fontFamily: 'Playfair Display',
+              fontSize: 13,
+              height: 1.3,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${meal.calories.round()} kcal',
+            style: TextStyle(
+              color: c.accent,
+              fontFamily: 'DM Mono',
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Text('P${meal.protein.round()}',
+                  style: TextStyle(
+                      color: c.mint, fontSize: 10, fontFamily: 'DM Mono')),
+              const SizedBox(width: 6),
+              Text('C${meal.carbs.round()}',
+                  style: TextStyle(
+                      color: c.sky, fontSize: 10, fontFamily: 'DM Mono')),
+              const SizedBox(width: 6),
+              Text('F${meal.fat.round()}',
+                  style: TextStyle(
+                      color: c.peach, fontSize: 10, fontFamily: 'DM Mono')),
+            ],
+          ),
+          const Spacer(),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: onLog,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: c.accent,
+                foregroundColor: AppColors.darkBg,
+                minimumSize: const Size.fromHeight(34),
+                padding: EdgeInsets.zero,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Text(
+                'Log',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
