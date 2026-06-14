@@ -45,10 +45,10 @@ String _coachPrompt(Map<String, dynamic> context) =>
     'Context: ${jsonEncode(context)}\n'
     'Write directly to the person using friendly second-person language: say "you" and "your". Never refer to them as "the user" or "User".\n'
     'Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.\n'
-    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. At least 1 suggestion should be the same as, or clearly inspired by, something in recentMeals when recentMeals is not empty; adjust portions or sides to better fit today. Avoid repeating meals listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one familiar option, one lighter/high-protein option, and one balanced or higher-carb option when the remaining targets allow it.\n'
+    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. When recentMeals is not empty and a recent-meal-inspired option is not already in alreadySuggestedMeals, the FIRST suggestion must be the same as, or clearly inspired by, something in recentMeals; adjust portions or sides to better fit today. Do not make grilled chicken with quinoa and vegetables the first suggestion unless it appears in recentMeals. Avoid repeating meals listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one familiar option, one lighter/high-protein option, and one balanced or higher-carb option when the remaining targets allow it.\n'
     'For every suggestion, explain how the total calories and macros were obtained with ingredient-level estimates. The totals must approximately equal the ingredient breakdown.\n'
     'Return ONLY a raw JSON object — no markdown, no explanation:\n'
-    '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["150g chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber","150g cooked rice: 195 kcal, 4g protein, 43g carbs, 0g fat, 1g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
+    '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["250g Greek yogurt: 150 kcal, 25g protein, 9g carbs, 1g fat, 0g fiber","50g oats: 190 kcal, 6g protein, 32g carbs, 4g fat, 5g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
     'Provide exactly 3 suggestions. Calories in kcal. Macros in grams. Round totals to whole numbers. Keep each suggestion within the remaining day when possible; if remaining calories are very low, vary portion sizes while staying practical.';
 
 class AiService {
@@ -152,7 +152,10 @@ class AiService {
         mode: 'coach',
         coachContext: context,
       );
-      return CoachPlan.fromJson(_parseJson(rawText));
+      return _personalizeCoachPlan(
+        CoachPlan.fromJson(_parseJson(rawText)),
+        context,
+      );
     } on AiServiceException catch (e) {
       if (settings.provider == 'server' && _serverCoachFallback(e.message)) {
         return _localCoachPlan(context);
@@ -653,14 +656,14 @@ class AiService {
               CoachSuggestion(
                 mealName: caloriesLeft <= 300
                     ? 'Greek yogurt protein bowl'
-                    : 'Chicken rice power bowl',
+                    : 'Salmon potato plate',
                 timing: mealSlot,
                 why:
                     'Fits the current calorie window while pushing protein toward your daily target.',
-                calories: light ? 245 : 588,
-                protein: light ? 28 : 54,
-                carbs: light ? 19 : 56,
-                fat: light ? 6 : 14,
+                calories: light ? 245 : 580,
+                protein: light ? 28 : 45,
+                carbs: light ? 19 : 55,
+                fat: light ? 6 : 20,
                 fiber: light ? 4 : 8,
                 ingredients: light
                     ? const [
@@ -669,10 +672,10 @@ class AiService {
                         '10g nuts or seeds',
                       ]
                     : const [
-                        '150g grilled chicken breast',
-                        '150g cooked rice or potatoes',
+                        '150g salmon fillet',
+                        '200g boiled or baked potatoes',
                         '2 cups vegetables',
-                        '1 tbsp olive oil or light sauce',
+                        '2 tbsp yogurt herb sauce',
                       ],
                 nutritionBreakdown: light
                     ? const [
@@ -681,10 +684,10 @@ class AiService {
                         '10g nuts or seeds: 60 kcal, 2g protein, 2g carbs, 5g fat, 1g fiber',
                       ]
                     : const [
-                        '150g grilled chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber',
-                        '150g cooked rice or potatoes: 180 kcal, 4g protein, 40g carbs, 0g fat, 2g fiber',
+                        '150g salmon fillet: 310 kcal, 34g protein, 0g carbs, 20g fat, 0g fiber',
+                        '200g boiled or baked potatoes: 170 kcal, 4g protein, 38g carbs, 0g fat, 4g fiber',
                         '2 cups vegetables: 70 kcal, 4g protein, 14g carbs, 0g fat, 6g fiber',
-                        '1 tbsp olive oil or light sauce: 90 kcal, 0g protein, 2g carbs, 9g fat, 0g fiber',
+                        '2 tbsp yogurt herb sauce: 30 kcal, 3g protein, 3g carbs, 0g fat, 0g fiber',
                       ],
                 steps: const [
                   'Adjust the carb portion up or down to match your remaining calories.',
@@ -793,6 +796,95 @@ class AiService {
         'Keep the familiar base, then reduce or add the carb/fat side depending on your remaining targets.',
       ],
     );
+  }
+
+  CoachPlan _personalizeCoachPlan(
+    CoachPlan plan,
+    Map<String, dynamic> context,
+  ) {
+    final recentMeals = context['recentMeals'];
+    if (recentMeals is! List || recentMeals.isEmpty) return plan;
+    final recentName = _firstRecentMealName(recentMeals);
+    if (recentName == null) return plan;
+    if (_mealNameAppearsInList(context['alreadySuggestedMeals'], recentName)) {
+      return plan;
+    }
+
+    final suggestions = List<CoachSuggestion>.from(plan.suggestions);
+    final existingIndex = suggestions.indexWhere(
+      (item) => _mealNamesMatch(item.mealName, recentName),
+    );
+    if (existingIndex == 0) return plan;
+    if (existingIndex > 0) {
+      final familiar = suggestions.removeAt(existingIndex);
+      return CoachPlan(
+        summary: plan.summary,
+        focus: plan.focus,
+        caution: plan.caution,
+        suggestions: [familiar, ...suggestions],
+      );
+    }
+
+    final recentSuggestion = _recentMealSuggestion(
+      context,
+      _mealSlotFromContext(context),
+    );
+    if (recentSuggestion == null) return plan;
+    return CoachPlan(
+      summary: plan.summary,
+      focus: plan.focus,
+      caution: plan.caution,
+      suggestions: [recentSuggestion, ...suggestions].take(3).toList(),
+    );
+  }
+
+  String _mealSlotFromContext(Map<String, dynamic> context) {
+    final time = Map<String, dynamic>.from(context['localTime'] as Map? ?? {});
+    final hour = (time['hour'] as num?)?.toInt() ?? DateTime.now().hour;
+    return hour < 11
+        ? 'breakfast'
+        : hour < 15
+            ? 'lunch'
+            : hour < 18
+                ? 'snack'
+                : 'dinner';
+  }
+
+  String? _firstRecentMealName(List recentMeals) {
+    for (final item in recentMeals) {
+      if (item is Map) {
+        final name = item['mealName']?.toString().trim();
+        if (name != null && name.isNotEmpty) return name;
+      }
+    }
+    return null;
+  }
+
+  bool _mealNameAppearsInList(dynamic meals, String recentName) {
+    if (meals is! List) return false;
+    return meals.any(
+      (item) =>
+          item is Map &&
+          _mealNamesMatch(
+            item['mealName']?.toString() ?? '',
+            recentName,
+          ),
+    );
+  }
+
+  bool _mealNamesMatch(String a, String b) {
+    final left = _normalizeMealName(a);
+    final right = _normalizeMealName(b);
+    if (left.isEmpty || right.isEmpty) return false;
+    return left.contains(right) || right.contains(left);
+  }
+
+  String _normalizeMealName(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'\badjusted for today\b'), '')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .trim();
   }
 
   double _num(dynamic value, double fallback) {
