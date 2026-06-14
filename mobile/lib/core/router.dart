@@ -92,8 +92,8 @@ class AppShell extends StatelessWidget {
           ),
           GlassBottomBarTab(
             label: 'Weight',
-            icon: Icon(CupertinoIcons.chart_bar_square),
-            activeIcon: Icon(CupertinoIcons.chart_bar_square_fill),
+            icon: Icon(Icons.monitor_weight_outlined),
+            activeIcon: Icon(Icons.monitor_weight),
           ),
           GlassBottomBarTab(
             label: 'Coach',
