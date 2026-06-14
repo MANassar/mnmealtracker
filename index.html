@@ -442,6 +442,32 @@ const asPositiveNumber = (value, fallback) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 const parseAiJson = raw => JSON.parse(String(raw || '').replace(/```json|```/gi, '').trim());
+const coachCopy = value => String(value || '')
+  .replace(/\b[Tt]he user has\b/g, 'You have')
+  .replace(/\b[Tt]he user is\b/g, 'You are')
+  .replace(/\b[Tt]he user should\b/g, 'You should')
+  .replace(/\b[Tt]he user needs\b/g, 'You need')
+  .replace(/\b[Tt]he user\b/g, 'you')
+  .replace(/\bUser has\b/g, 'You have')
+  .replace(/\bUser is\b/g, 'You are')
+  .replace(/\bUser should\b/g, 'You should')
+  .replace(/\bUser needs\b/g, 'You need')
+  .replace(/\bUser\b/g, 'You');
+const normalizeCoachPlanCopy = plan => ({
+  ...plan,
+  summary: coachCopy(plan?.summary),
+  focus: coachCopy(plan?.focus),
+  caution: coachCopy(plan?.caution),
+  suggestions: (plan?.suggestions || []).map(item => ({
+    ...item,
+    mealName: coachCopy(item?.mealName),
+    timing: coachCopy(item?.timing),
+    why: coachCopy(item?.why),
+    ingredients: (item?.ingredients || []).map(coachCopy),
+    nutritionBreakdown: (item?.nutritionBreakdown || []).map(coachCopy),
+    steps: (item?.steps || []).map(coachCopy),
+  })),
+});
 const normalizeTargets = settings => ({
   calories: asPositiveNumber(settings?.targets?.calories, DEFAULT_TARGETS.calories),
   protein:  asPositiveNumber(settings?.targets?.protein,  DEFAULT_TARGETS.protein),
@@ -493,11 +519,13 @@ Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros t
 const COACH_PROMPT = context =>
 `You are a practical nutrition coach. Use all available user context to suggest meals that fit this exact moment of the day.
 Context: ${JSON.stringify(context)}
+Write directly to the person using friendly second-person language: say "you" and "your". Never refer to them as "the user" or "User".
 Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.
-Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals unless the user seems to repeat them often. Keep suggestions culturally flexible and easy to prepare or order.
+Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals or any meal listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one lighter/high-protein option, one balanced moderate option, and one higher-calorie or higher-carb option when the remaining targets allow it.
+For every suggestion, explain how the total calories and macros were obtained with ingredient-level estimates. The totals must approximately equal the ingredient breakdown.
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
-Provide 3 suggestions. Calories in kcal. Macros in grams. Keep each suggestion within the remaining day when possible; if remaining calories are very low, suggest a small high-protein option and say why.`;
+{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["150g chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber","150g cooked rice: 195 kcal, 4g protein, 43g carbs, 0g fat, 1g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
+Provide exactly 3 suggestions. Calories in kcal. Macros in grams. Round totals to whole numbers. Keep each suggestion within the remaining day when possible; if remaining calories are very low, vary portion sizes while staying practical.`;
 
 async function callAnthropic(img, desc, key) {
   // Anthropic manual mode uses the user's own key directly from the browser.
@@ -1261,7 +1289,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
       const raw = activeProvider === 'anthropic'
         ? await callAnthropic(img, trimmedDesc, key)
         : await callOpenAI(img, trimmedDesc, key);
-      const parsed = parseAiJson(raw);
+      const parsed = normalizeCoachPlanCopy(parseAiJson(raw));
       setAnalysis(parsed); setEditableNutrition(parsed); setAnalysisProvider(activeProvider); setStatus('review');
       trackEvent('meal_analysis_succeeded', {
         provider: activeProvider,
@@ -1554,7 +1582,7 @@ const timeOfDayLabel = date => {
   return `${part} · ${String(hour).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 };
 
-const buildCoachContext = ({ settings, meals, weights, targets }) => {
+const buildCoachContext = ({ settings, meals, weights, targets, existingSuggestions = [] }) => {
   const now = new Date();
   const today = meals.filter(m => m.date === todayStr());
   const consumed = {
@@ -1566,7 +1594,7 @@ const buildCoachContext = ({ settings, meals, weights, targets }) => {
   const latestWeight = [...weights].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || null;
   const recentMeals = [...meals]
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    .slice(0, 18)
+    .slice(0, 10)
     .map(meal => ({
       date: meal.date,
       timestamp: meal.timestamp,
@@ -1576,8 +1604,8 @@ const buildCoachContext = ({ settings, meals, weights, targets }) => {
       carbs: meal.carbs,
       fat: meal.fat,
       fiber: meal.fiber || 0,
-      description: meal.description || '',
-      ingredients: meal.ingredients || [],
+      description: String(meal.description || '').slice(0, 120),
+      ingredients: (meal.ingredients || []).slice(0, 5),
     }));
   return {
     generatedAt: now.toISOString(),
@@ -1600,13 +1628,158 @@ const buildCoachContext = ({ settings, meals, weights, targets }) => {
       fitness: { available: false, exercises: [] },
     },
     recentMeals,
+    ...(existingSuggestions.length ? {
+      alreadySuggestedMeals: existingSuggestions.map(item => ({
+        mealName: item.mealName,
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fat: item.fat,
+      })),
+    } : {}),
   };
 };
 
-function CoachView({ meals, weights = [], settings, targets, onSettings }) {
+const localCoachPlan = context => {
+  const remaining = context.remainingToday || {};
+  const targets = context.targets || DEFAULT_TARGETS;
+  const hour = Number(context.localTime?.hour ?? new Date().getHours());
+  const timing = hour < 11 ? 'breakfast' : hour < 15 ? 'lunch' : hour < 18 ? 'snack' : 'dinner';
+  const caloriesLeft = Number.isFinite(Number(remaining.calories)) ? Number(remaining.calories) : targets.calories;
+  const light = caloriesLeft <= 300;
+  const alreadySuggested = (context.alreadySuggestedMeals || []).length;
+  return {
+    summary: 'The coach server is not ready for this app build yet, so this is a local suggestion based on your remaining targets.',
+    focus: caloriesLeft <= 300
+      ? 'Keep the next choice small, protein-forward, and easy on added fats.'
+      : 'Prioritize protein first, then use carbs or fats to fit the rest of your day.',
+    caution: 'AI coach mode will take over after the server function with coach support is deployed. This is general nutrition guidance and can be wrong.',
+    suggestions: alreadySuggested >= 3 ? [
+      {
+        mealName: 'Cottage cheese fruit plate',
+        timing,
+        why: 'A lighter protein-first option with modest carbs from fruit.',
+        calories: 320,
+        protein: 34,
+        carbs: 32,
+        fat: 6,
+        fiber: 5,
+        ingredients: ['250g cottage cheese', '1 medium apple or pear', '10g chia seeds'],
+        nutritionBreakdown: [
+          '250g cottage cheese: 210 kcal, 31g protein, 10g carbs, 5g fat, 0g fiber',
+          '1 medium apple or pear: 95 kcal, 1g protein, 25g carbs, 0g fat, 4g fiber',
+          '10g chia seeds: 50 kcal, 2g protein, 4g carbs, 3g fat, 4g fiber',
+        ],
+        steps: ['Use berries instead of apple if you need fewer carbs.'],
+      },
+      {
+        mealName: 'Tofu noodle stir-fry',
+        timing,
+        why: 'Balanced protein, carbs, and fats with more volume from vegetables.',
+        calories: 520,
+        protein: 32,
+        carbs: 62,
+        fat: 16,
+        fiber: 9,
+        ingredients: ['180g firm tofu', '180g cooked noodles', '2 cups stir-fry vegetables', '1 tbsp teriyaki or soy-based sauce'],
+        nutritionBreakdown: [
+          '180g firm tofu: 210 kcal, 23g protein, 5g carbs, 12g fat, 2g fiber',
+          '180g cooked noodles: 230 kcal, 7g protein, 48g carbs, 1g fat, 3g fiber',
+          '2 cups stir-fry vegetables: 70 kcal, 4g protein, 14g carbs, 0g fat, 4g fiber',
+          '1 tbsp sauce: 25 kcal, 1g protein, 5g carbs, 0g fat, 0g fiber',
+        ],
+        steps: ['Use half the noodles if calories are tight.'],
+      },
+      {
+        mealName: 'Turkey avocado sandwich',
+        timing,
+        why: 'A more filling option with higher carbs and fats for a larger remaining window.',
+        calories: 610,
+        protein: 44,
+        carbs: 58,
+        fat: 22,
+        fiber: 10,
+        ingredients: ['2 slices whole-grain bread', '150g sliced turkey breast', '50g avocado', 'Salad vegetables'],
+        nutritionBreakdown: [
+          '2 slices whole-grain bread: 220 kcal, 10g protein, 38g carbs, 4g fat, 6g fiber',
+          '150g sliced turkey breast: 180 kcal, 36g protein, 2g carbs, 3g fat, 0g fiber',
+          '50g avocado: 80 kcal, 1g protein, 4g carbs, 7g fat, 3g fiber',
+          'Salad vegetables and light spread: 70 kcal, 2g protein, 8g carbs, 4g fat, 1g fiber',
+        ],
+        steps: ['Skip avocado or use one bread slice if you need a smaller meal.'],
+      },
+    ] : [
+      {
+        mealName: caloriesLeft <= 300 ? 'Greek yogurt protein bowl' : 'Chicken rice power bowl',
+        timing,
+        why: 'Fits the current calorie window while pushing protein toward your daily target.',
+        calories: light ? 245 : 588,
+        protein: light ? 28 : 54,
+        carbs: light ? 19 : 56,
+        fat: light ? 6 : 14,
+        fiber: caloriesLeft <= 300 ? 4 : 8,
+        ingredients: caloriesLeft <= 300
+          ? ['250g Greek yogurt or skyr', '1 small serving berries', '10g nuts or seeds']
+          : ['150g grilled chicken breast', '150g cooked rice or potatoes', '2 cups vegetables', '1 tbsp olive oil or light sauce'],
+        nutritionBreakdown: caloriesLeft <= 300
+          ? [
+              '250g Greek yogurt or skyr: 150 kcal, 25g protein, 9g carbs, 1g fat, 0g fiber',
+              '75g berries: 35 kcal, 1g protein, 8g carbs, 0g fat, 3g fiber',
+              '10g nuts or seeds: 60 kcal, 2g protein, 2g carbs, 5g fat, 1g fiber',
+            ]
+          : [
+              '150g grilled chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber',
+              '150g cooked rice or potatoes: 180 kcal, 4g protein, 40g carbs, 0g fat, 2g fiber',
+              '2 cups vegetables: 70 kcal, 4g protein, 14g carbs, 0g fat, 6g fiber',
+              '1 tbsp olive oil or light sauce: 90 kcal, 0g protein, 2g carbs, 9g fat, 0g fiber',
+            ],
+        steps: ['Adjust the carb portion up or down to match your remaining calories.'],
+      },
+      {
+        mealName: 'Tuna and egg salad plate',
+        timing,
+        why: 'A high-protein option that stays flexible if you are short on calories or carbs.',
+        calories: 410,
+        protein: 51,
+        carbs: 17,
+        fat: 14,
+        fiber: 6,
+        ingredients: ['1 can tuna or salmon', '2 boiled eggs', 'Large salad vegetables', 'Light dressing or yogurt sauce'],
+        nutritionBreakdown: [
+          '1 can tuna or salmon: 150 kcal, 32g protein, 0g carbs, 2g fat, 0g fiber',
+          '2 boiled eggs: 140 kcal, 12g protein, 1g carbs, 10g fat, 0g fiber',
+          'Large salad vegetables: 70 kcal, 4g protein, 12g carbs, 0g fat, 5g fiber',
+          'Light dressing or yogurt sauce: 50 kcal, 3g protein, 4g carbs, 2g fat, 1g fiber',
+        ],
+        steps: ['Add bread, rice cakes, or fruit only if carbs remain.'],
+      },
+      {
+        mealName: 'Lean protein wrap',
+        timing,
+        why: 'Easy to prepare or order, with controlled portions and a balanced macro profile.',
+        calories: 425,
+        protein: 39,
+        carbs: 46,
+        fat: 10,
+        fiber: 7,
+        ingredients: ['1 whole-grain wrap', '120g lean turkey, chicken, tofu, or beans', 'Crunchy vegetables', 'Low-fat yogurt sauce or salsa'],
+        nutritionBreakdown: [
+          '1 whole-grain wrap: 180 kcal, 6g protein, 30g carbs, 4g fat, 4g fiber',
+          '120g lean turkey, chicken, tofu, or beans: 170 kcal, 28g protein, 4g carbs, 5g fat, 1g fiber',
+          'Crunchy vegetables: 40 kcal, 2g protein, 8g carbs, 0g fat, 3g fiber',
+          'Low-fat yogurt sauce or salsa: 35 kcal, 3g protein, 4g carbs, 1g fat, 0g fiber',
+        ],
+        steps: ['Skip cheese or heavy sauces if fat is nearly used up.'],
+      },
+    ],
+  };
+};
+
+function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSuggestion }) {
   const [status, setStatus] = useState('idle');
   const [plan, setPlan] = useState(null);
   const [err, setErr] = useState('');
+  const [logMsg, setLogMsg] = useState('');
   const activeProvider =
     settings.provider === 'anthropic' && settings.anthropicKey?.trim() ? 'anthropic' :
     settings.provider === 'openai' && settings.oaiKey?.trim() ? 'openai' :
@@ -1623,19 +1796,45 @@ function CoachView({ meals, weights = [], settings, targets, onSettings }) {
   const latestWeight = [...weights].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || null;
   const weightLabel = latestWeight ? `${Number(latestWeight.weight || 0).toFixed(1)} ${latestWeight.unit || settings.weightUnit || 'kg'}` : 'No weight yet';
   const macroPct = key => Math.min(100, Math.max(0, (consumed[key] / targets[key]) * 100 || 0));
-  const getSuggestions = async () => {
-    const context = buildCoachContext({ settings, meals, weights, targets });
-    setStatus('loading'); setErr('');
+  const getSuggestions = async (append = false) => {
+    const context = buildCoachContext({
+      settings,
+      meals,
+      weights,
+      targets,
+      existingSuggestions: append ? (plan?.suggestions || []) : [],
+    });
+    setStatus('loading'); setErr(''); setLogMsg('');
     trackEvent('coach_started', { provider: activeProvider, meal_count_bucket: valueBucket(meals.length, 10) });
     try {
       const raw = activeProvider === 'anthropic'
         ? await callAnthropicCoach(context, key)
         : await callOpenAICoach(context, key);
       const parsed = parseAiJson(raw);
-      setPlan(parsed);
+      setPlan(append && plan
+        ? {
+            ...parsed,
+            summary: plan.summary || parsed.summary,
+            suggestions: [...(plan.suggestions || []), ...(parsed.suggestions || [])],
+          }
+        : parsed);
       setStatus('ready');
       trackEvent('coach_succeeded', { provider: activeProvider, suggestion_count: (parsed.suggestions || []).length });
     } catch (error) {
+      const message = String(error?.message || error || '');
+      if (activeProvider === 'server' && /400|provide an image|coach context/i.test(message)) {
+        const parsed = normalizeCoachPlanCopy(localCoachPlan(context));
+        setPlan(append && plan
+          ? {
+              ...parsed,
+              summary: plan.summary || parsed.summary,
+              suggestions: [...(plan.suggestions || []), ...(parsed.suggestions || [])],
+            }
+          : parsed);
+        setStatus('ready');
+        trackEvent('coach_local_fallback', { provider: activeProvider });
+        return;
+      }
       setErr(`Coach failed: ${error.message || error}`);
       setStatus('idle');
       trackEvent('coach_failed', { provider: activeProvider });
@@ -1674,7 +1873,19 @@ function CoachView({ meals, weights = [], settings, targets, onSettings }) {
       </div>
       ${item.why ? html`<div style="font-size:13px;color:var(--text);line-height:1.35;margin-bottom:9px">${item.why}</div>` : null}
       ${(item.ingredients || []).slice(0, 5).map(i => html`<div style="font-size:12px;color:var(--muted);line-height:1.35">· ${i}</div>`)}
+      ${(item.nutritionBreakdown || []).length ? html`
+        <div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.1em;margin-top:10px;margin-bottom:5px">Macro math</div>
+        ${(item.nutritionBreakdown || []).slice(0, 6).map(i => html`
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;font-family:'DM Mono',monospace">· ${i}</div>`)}
+      ` : null}
       ${(item.steps || []).length ? html`<div style="font-size:12px;color:var(--muted);font-style:italic;line-height:1.35;margin-top:9px">${(item.steps || []).slice(0, 2).join(' ')}</div>` : null}
+      <button onClick=${() => {
+          onLogSuggestion(item, activeProvider);
+          setLogMsg(`Logged ${item.mealName || 'meal'}.`);
+        }}
+        style="width:100%;background:var(--accent);border:none;color:#0c1a10;border-radius:10px;padding:12px;font-size:13px;font-weight:800;cursor:pointer;min-height:44px;margin-top:12px">
+        Log this meal
+      </button>
     </div>`;
   return html`
     <div style="display:flex;flex-direction:column;height:100%;min-height:0">
@@ -1712,11 +1923,12 @@ function CoachView({ meals, weights = [], settings, targets, onSettings }) {
                 ${label} · ${value}
               </div>`)}
           </div>
-          <button onClick=${getSuggestions} disabled=${status === 'loading'}
+          <button onClick=${() => getSuggestions(false)} disabled=${status === 'loading'}
             style="width:100%;background:${status === 'loading' ? 'var(--muted)' : providerColor(activeProvider)};border:none;color:#0c1a10;border-radius:14px;padding:16px;font-size:15px;font-weight:800;cursor:${status === 'loading' ? 'wait' : 'pointer'};min-height:54px;margin-bottom:12px">
             ${status === 'loading' ? 'Thinking…' : 'Suggest my next meal'}
           </button>
           ${err ? html`<div style="background:rgba(212,106,90,.12);border:1px solid var(--danger);border-radius:10px;padding:12px;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.4">${err}</div>` : null}
+          ${logMsg ? html`<div style="background:rgba(109,184,122,.12);border:1px solid var(--mint);border-radius:10px;padding:12px;color:var(--mint);font-size:13px;margin-bottom:12px;line-height:1.4">${logMsg}</div>` : null}
           ${plan ? html`
             <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
               ${plan.summary ? html`<div style="font-size:13px;color:var(--text);line-height:1.4">${plan.summary}</div>` : null}
@@ -1724,6 +1936,10 @@ function CoachView({ meals, weights = [], settings, targets, onSettings }) {
             </div>
             ${(plan.suggestions || []).map(item => html`<${Suggestion} item=${item}/>`)}
             ${plan.caution ? html`<div style="font-size:11px;color:var(--muted);line-height:1.4;margin:4px 0 18px">${plan.caution}</div>` : null}
+            <button onClick=${() => getSuggestions(true)} disabled=${status === 'loading'}
+              style="width:100%;background:transparent;border:1px solid var(--border);color:var(--accent);border-radius:14px;padding:14px;font-size:14px;font-weight:800;cursor:${status === 'loading' ? 'wait' : 'pointer'};min-height:50px;margin-bottom:16px">
+              ${status === 'loading' ? 'Thinking…' : 'Suggest more'}
+            </button>
           ` : null}
         </div>
       </div>
@@ -2519,6 +2735,35 @@ function App() {
       setView('today');
     }
   };
+  const logCoachSuggestion = (suggestion, provider = settings.provider) => {
+    const timestamp = new Date().toISOString();
+    const meal = {
+      id: Date.now(),
+      date: todayStr(),
+      timestamp,
+      description: 'Logged from Coach suggestion',
+      provider,
+      imageData: null,
+      imageType: null,
+      mealName: suggestion.mealName || 'Coach suggestion',
+      calories: Number(suggestion.calories) || 0,
+      protein: Number(suggestion.protein) || 0,
+      carbs: Number(suggestion.carbs) || 0,
+      fat: Number(suggestion.fat) || 0,
+      fiber: Number(suggestion.fiber) || 0,
+      ingredients: suggestion.ingredients || [],
+      portionNote: [
+        suggestion.why || '',
+        (suggestion.nutritionBreakdown || []).length ? `Macro math: ${(suggestion.nutritionBreakdown || []).join(' | ')}` : '',
+        ...(suggestion.steps || []),
+      ].filter(Boolean).join('\n'),
+      confidence: 'medium',
+    };
+    const u = [meal, ...meals];
+    if (persistMeals(u)) {
+      trackEvent('meal_logged', mealAnalyticsProps(meal, { source: 'coach_suggestion' }));
+    }
+  };
   const updateMeal = (meal, meta = {}) => {
     // Editing preserves the meal id and returns to the view that launched editing.
     const u = meals.map(m => m.id === meal.id ? meal : m);
@@ -2690,7 +2935,7 @@ function App() {
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} weights=${weights} onSave=${s => { updateSettings(s); setView('today'); }} onApply=${updateSettings} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} weights=${weights} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onLogAgain=${logMealAgain} onDeleteWeight=${deleteWeight} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
           view === 'weight'   ? html`<${WeightView} weights=${weights} settings=${settings} onAddWeight=${addWeight} onDeleteWeight=${deleteWeight} onSetGoal=${setGoalWeight} onSettings=${() => setView('settings')}/>` :
-          view === 'coach'    ? html`<${CoachView} meals=${meals} weights=${weights} settings=${settings} targets=${targets} onSettings=${() => setView('settings')}/>` :
+          view === 'coach'    ? html`<${CoachView} meals=${meals} weights=${weights} settings=${settings} targets=${targets} onSettings=${() => setView('settings')} onLogSuggestion=${logCoachSuggestion}/>` :
                                 html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 

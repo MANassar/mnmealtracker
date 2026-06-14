@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/models/app_settings.dart';
 import '../../core/models/meal.dart';
@@ -110,7 +111,30 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
                 ],
                 if (_plan != null) ...[
                   const SizedBox(height: 14),
-                  _PlanCard(plan: _plan!),
+                  _PlanCard(
+                    plan: _plan!,
+                    onLog: _logSuggestion,
+                  ),
+                  const SizedBox(height: 2),
+                  OutlinedButton(
+                    onPressed: _loading
+                        ? null
+                        : () => _getCoachPlan(
+                              settings,
+                              meals,
+                              weights,
+                              append: true,
+                            ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      foregroundColor: c.accent,
+                      side: BorderSide(color: c.border),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: Text(_loading ? 'Thinking...' : 'Suggest more'),
+                  ),
                 ],
               ],
             ),
@@ -121,10 +145,8 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
   }
 
   Future<void> _getCoachPlan(
-    AppSettings settings,
-    List<Meal> meals,
-    List<WeightEntry> weights,
-  ) async {
+      AppSettings settings, List<Meal> meals, List<WeightEntry> weights,
+      {bool append = false}) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -133,10 +155,26 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     try {
       final plan = await ref.read(aiServiceProvider).coach(
             settings: settings,
-            context: _coachContext(settings, meals, weights),
+            context: _coachContext(
+              settings,
+              meals,
+              weights,
+              existingSuggestions: append ? _plan?.suggestions : null,
+            ),
           );
       if (!mounted) return;
-      setState(() => _plan = plan);
+      setState(() {
+        _plan = append && _plan != null
+            ? CoachPlan(
+                summary:
+                    _plan!.summary.isNotEmpty ? _plan!.summary : plan.summary,
+                focus: plan.focus.isNotEmpty ? plan.focus : _plan!.focus,
+                caution:
+                    plan.caution.isNotEmpty ? plan.caution : _plan!.caution,
+                suggestions: [..._plan!.suggestions, ...plan.suggestions],
+              )
+            : plan;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = _friendlyError(e));
@@ -146,10 +184,8 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
   }
 
   Map<String, dynamic> _coachContext(
-    AppSettings settings,
-    List<Meal> meals,
-    List<WeightEntry> weights,
-  ) {
+      AppSettings settings, List<Meal> meals, List<WeightEntry> weights,
+      {List<CoachSuggestion>? existingSuggestions}) {
     final now = DateTime.now();
     final today = _todayStr(now);
     final todayMeals = meals.where((m) => m.date == today).toList();
@@ -195,8 +231,54 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
           'exercises': <String>[],
         },
       },
-      'recentMeals': recentMeals.take(18).map(_mealContext).toList(),
+      'recentMeals': recentMeals.take(10).map(_mealContext).toList(),
+      if (existingSuggestions != null && existingSuggestions.isNotEmpty)
+        'alreadySuggestedMeals': existingSuggestions
+            .map((suggestion) => {
+                  'mealName': suggestion.mealName,
+                  'calories': suggestion.calories,
+                  'protein': suggestion.protein,
+                  'carbs': suggestion.carbs,
+                  'fat': suggestion.fat,
+                })
+            .toList(),
     };
+  }
+
+  Future<void> _logSuggestion(CoachSuggestion suggestion) async {
+    final settings = ref.read(settingsProvider);
+    final now = DateTime.now();
+    final meal = Meal()
+      ..uuid = const Uuid().v4()
+      ..date = _todayStr(now)
+      ..timestamp = now.millisecondsSinceEpoch
+      ..mealName = suggestion.mealName
+      ..calories = suggestion.calories
+      ..protein = suggestion.protein
+      ..carbs = suggestion.carbs
+      ..fat = suggestion.fat
+      ..fiber = suggestion.fiber
+      ..provider = settings.provider
+      ..confidence = 'medium'
+      ..portionNote = _coachPortionNote(suggestion)
+      ..description = 'Logged from Coach suggestion'
+      ..ingredients = jsonEncode(suggestion.ingredients);
+
+    await ref.read(mealsProvider.notifier).save(meal);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Logged ${suggestion.mealName}')),
+    );
+  }
+
+  String _coachPortionNote(CoachSuggestion suggestion) {
+    final parts = <String>[
+      if (suggestion.why.trim().isNotEmpty) suggestion.why.trim(),
+      if (suggestion.nutritionBreakdown.isNotEmpty)
+        'Macro math: ${suggestion.nutritionBreakdown.join(' | ')}',
+      if (suggestion.steps.isNotEmpty) suggestion.steps.join(' '),
+    ];
+    return parts.join('\n');
   }
 
   Map<String, dynamic> _mealContext(Meal meal) => {
@@ -209,9 +291,16 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
         'carbs': meal.carbs,
         'fat': meal.fat,
         'fiber': meal.fiber,
-        'description': meal.description,
-        'ingredients': _ingredients(meal.ingredients),
+        'description': _shortText(meal.description, 120),
+        'ingredients': _ingredients(meal.ingredients).take(5).toList(),
       };
+
+  String? _shortText(String? value, int maxLength) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    if (trimmed.length <= maxLength) return trimmed;
+    return '${trimmed.substring(0, maxLength).trim()}...';
+  }
 
   List<String> _ingredients(String? raw) {
     if (raw == null || raw.trim().isEmpty) return [];
@@ -258,7 +347,11 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
   }
 
   String _friendlyError(Object e) {
-    final text = e.toString().replaceFirst('Exception: ', '');
+    final text = e
+        .toString()
+        .replaceFirst('Exception: ', '')
+        .replaceFirst(RegExp(r'Source stack:[\s\S]*'), '')
+        .trim();
     return text.isEmpty ? 'Coach could not generate suggestions.' : text;
   }
 }
@@ -407,8 +500,9 @@ class _Chip extends StatelessWidget {
 
 class _PlanCard extends StatelessWidget {
   final CoachPlan plan;
+  final ValueChanged<CoachSuggestion> onLog;
 
-  const _PlanCard({required this.plan});
+  const _PlanCard({required this.plan, required this.onLog});
 
   @override
   Widget build(BuildContext context) {
@@ -435,7 +529,12 @@ class _PlanCard extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 12),
-        ...plan.suggestions.map((suggestion) => _SuggestionCard(suggestion)),
+        ...plan.suggestions.map(
+          (suggestion) => _SuggestionCard(
+            suggestion,
+            onLog: () => onLog(suggestion),
+          ),
+        ),
         if (plan.caution.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(plan.caution,
@@ -448,8 +547,9 @@ class _PlanCard extends StatelessWidget {
 
 class _SuggestionCard extends StatelessWidget {
   final CoachSuggestion suggestion;
+  final VoidCallback onLog;
 
-  const _SuggestionCard(this.suggestion);
+  const _SuggestionCard(this.suggestion, {required this.onLog});
 
   @override
   Widget build(BuildContext context) {
@@ -506,12 +606,49 @@ class _SuggestionCard extends StatelessWidget {
             ...suggestion.ingredients.take(5).map((item) => Text('· $item',
                 style: TextStyle(color: c.muted, fontSize: 12, height: 1.35))),
           ],
+          if (suggestion.nutritionBreakdown.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text('Macro math',
+                style: TextStyle(
+                    color: c.accent, fontSize: 10, letterSpacing: 1.1)),
+            const SizedBox(height: 5),
+            ...suggestion.nutritionBreakdown.take(6).map(
+                  (item) => Text(
+                    '· $item',
+                    style: TextStyle(
+                      color: c.muted,
+                      fontSize: 12,
+                      height: 1.35,
+                      fontFamily: 'DM Mono',
+                    ),
+                  ),
+                ),
+          ],
           if (suggestion.steps.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(suggestion.steps.take(2).join(' '),
                 style: TextStyle(
                     color: c.muted, fontSize: 12, fontStyle: FontStyle.italic)),
           ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: onLog,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: c.accent,
+                foregroundColor: AppColors.darkBg,
+                minimumSize: const Size.fromHeight(44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: const Text(
+                'Log this meal',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
         ],
       ),
     );

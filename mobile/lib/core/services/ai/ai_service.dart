@@ -8,6 +8,9 @@ import 'meal_analysis.dart';
 
 const _defaultServerUrl =
     'https://mnmealtracker.netlify.app/.netlify/functions/analyze-meal';
+// TODO(release): Remove this Development branch fallback before shipping.
+const _developmentServerUrl =
+    'https://development--mnmealtracker.netlify.app/.netlify/functions/analyze-meal';
 const _defaultServerToken = 'f60c9972646d37fe29b95d95806f103c551799183c90d388';
 
 const _analyzePrompt =
@@ -40,11 +43,13 @@ String _targetsPrompt(MacroProfile profile) =>
 String _coachPrompt(Map<String, dynamic> context) =>
     'You are a practical nutrition coach. Use all available user context to suggest meals that fit this exact moment of the day.\n'
     'Context: ${jsonEncode(context)}\n'
+    'Write directly to the person using friendly second-person language: say "you" and "your". Never refer to them as "the user" or "User".\n'
     'Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.\n'
-    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals unless the user seems to repeat them often. Keep suggestions culturally flexible and easy to prepare or order.\n'
+    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals or any meal listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one lighter/high-protein option, one balanced moderate option, and one higher-calorie or higher-carb option when the remaining targets allow it.\n'
+    'For every suggestion, explain how the total calories and macros were obtained with ingredient-level estimates. The totals must approximately equal the ingredient breakdown.\n'
     'Return ONLY a raw JSON object — no markdown, no explanation:\n'
-    '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
-    'Provide 3 suggestions. Calories in kcal. Macros in grams. Keep each suggestion within the remaining day when possible; if remaining calories are very low, suggest a small high-protein option and say why.';
+    '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["150g chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber","150g cooked rice: 195 kcal, 4g protein, 43g carbs, 0g fat, 1g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
+    'Provide exactly 3 suggestions. Calories in kcal. Macros in grams. Round totals to whole numbers. Keep each suggestion within the remaining day when possible; if remaining calories are very low, vary portion sizes while staying practical.';
 
 class AiService {
   final Dio _dio =
@@ -141,18 +146,34 @@ class AiService {
     required AppSettings settings,
     required Map<String, dynamic> context,
   }) async {
-    final rawText = await _callProvider(
-      settings: settings,
-      mode: 'coach',
-      coachContext: context,
-    );
-
     try {
+      final rawText = await _callProvider(
+        settings: settings,
+        mode: 'coach',
+        coachContext: context,
+      );
       return CoachPlan.fromJson(_parseJson(rawText));
+    } on AiServiceException catch (e) {
+      if (settings.provider == 'server' && _serverCoachFallback(e.message)) {
+        return _localCoachPlan(context);
+      }
+      rethrow;
+    } on DioError catch (e) {
+      final message = _dioMessage(e, settings.provider);
+      if (settings.provider == 'server' && _serverCoachFallback(message)) {
+        return _localCoachPlan(context);
+      }
+      throw AiServiceException(message);
     } on FormatException {
       throw const AiServiceException(
         'The AI response was not valid coach data. Try again in a moment.',
       );
+    } catch (e) {
+      final message = e.toString();
+      if (settings.provider == 'server' && _serverCoachFallback(message)) {
+        return _localCoachPlan(context);
+      }
+      throw AiServiceException(_cleanExceptionText(message));
     }
   }
 
@@ -229,7 +250,6 @@ class AiService {
             ? settings.serverUrl!
             : _defaultServerUrl)
         .trimRight();
-
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'X-Meal-Tracker-Token': settings.serverToken?.isNotEmpty == true
@@ -245,6 +265,34 @@ class AiService {
     if (profile != null) body['profile'] = profile.toJson();
     if (coachContext != null) body['context'] = coachContext;
 
+    try {
+      return await _postServer(url: url, headers: headers, body: body);
+    } on DioError {
+      if (_shouldTryDevelopmentServer(settings, url)) {
+        return _postServer(
+          url: _developmentServerUrl,
+          headers: headers,
+          body: body,
+        );
+      }
+      rethrow;
+    } on Exception {
+      if (_shouldTryDevelopmentServer(settings, url)) {
+        return _postServer(
+          url: _developmentServerUrl,
+          headers: headers,
+          body: body,
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<String> _postServer({
+    required String url,
+    required Map<String, String> headers,
+    required Map<String, dynamic> body,
+  }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       url,
       data: body,
@@ -254,6 +302,12 @@ class AiService {
     final text = (response.data?['text'] as String?) ?? '';
     if (text.isEmpty) throw Exception('Empty response from server.');
     return text;
+  }
+
+  bool _shouldTryDevelopmentServer(AppSettings settings, String url) {
+    if (settings.serverUrl?.isNotEmpty == true) return false;
+    return url == _defaultServerUrl &&
+        _developmentServerUrl != _defaultServerUrl;
   }
 
   // ── Anthropic ──────────────────────────────────────────────────────────────
@@ -477,6 +531,232 @@ class AiService {
       default:
         return provider;
     }
+  }
+
+  bool _serverCoachFallback(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('400') ||
+        lower.contains('please provide an image') ||
+        lower.contains('coach context') ||
+        lower.contains('not valid coach');
+  }
+
+  CoachPlan _localCoachPlan(Map<String, dynamic> context) {
+    final remaining =
+        Map<String, dynamic>.from(context['remainingToday'] as Map? ?? {});
+    final targets = Map<String, dynamic>.from(context['targets'] as Map? ?? {});
+    final time = Map<String, dynamic>.from(context['localTime'] as Map? ?? {});
+    final hour = (time['hour'] as num?)?.toInt() ?? DateTime.now().hour;
+    final mealSlot = hour < 11
+        ? 'breakfast'
+        : hour < 15
+            ? 'lunch'
+            : hour < 18
+                ? 'snack'
+                : 'dinner';
+    final caloriesLeft =
+        _num(remaining['calories'], _num(targets['calories'], 1800));
+    final light = caloriesLeft <= 300;
+    final alreadySuggested =
+        (context['alreadySuggestedMeals'] as List?)?.length ?? 0;
+
+    return CoachPlan(
+      summary:
+          'The coach server is not ready for this app build yet, so this is a local suggestion based on your remaining targets.',
+      focus: caloriesLeft <= 300
+          ? 'Keep the next choice small, protein-forward, and easy on added fats.'
+          : 'Prioritize protein first, then use carbs or fats to fit the rest of your day.',
+      caution:
+          'AI coach mode will take over after the server function with coach support is deployed. This is general nutrition guidance and can be wrong.',
+      suggestions: alreadySuggested >= 3
+          ? [
+              CoachSuggestion(
+                mealName: 'Cottage cheese fruit plate',
+                timing: mealSlot,
+                why:
+                    'A lighter protein-first option with modest carbs from fruit.',
+                calories: 320,
+                protein: 34,
+                carbs: 32,
+                fat: 6,
+                fiber: 5,
+                ingredients: const [
+                  '250g cottage cheese',
+                  '1 medium apple or pear',
+                  '10g chia seeds',
+                ],
+                nutritionBreakdown: const [
+                  '250g cottage cheese: 210 kcal, 31g protein, 10g carbs, 5g fat, 0g fiber',
+                  '1 medium apple or pear: 95 kcal, 1g protein, 25g carbs, 0g fat, 4g fiber',
+                  '10g chia seeds: 50 kcal, 2g protein, 4g carbs, 3g fat, 4g fiber',
+                ],
+                steps: const [
+                  'Use berries instead of apple if you need fewer carbs.',
+                ],
+              ),
+              CoachSuggestion(
+                mealName: 'Tofu noodle stir-fry',
+                timing: mealSlot,
+                why:
+                    'Balanced protein, carbs, and fats with more volume from vegetables.',
+                calories: 520,
+                protein: 32,
+                carbs: 62,
+                fat: 16,
+                fiber: 9,
+                ingredients: const [
+                  '180g firm tofu',
+                  '180g cooked noodles',
+                  '2 cups stir-fry vegetables',
+                  '1 tbsp teriyaki or soy-based sauce',
+                ],
+                nutritionBreakdown: const [
+                  '180g firm tofu: 210 kcal, 23g protein, 5g carbs, 12g fat, 2g fiber',
+                  '180g cooked noodles: 230 kcal, 7g protein, 48g carbs, 1g fat, 3g fiber',
+                  '2 cups stir-fry vegetables: 70 kcal, 4g protein, 14g carbs, 0g fat, 4g fiber',
+                  '1 tbsp sauce: 25 kcal, 1g protein, 5g carbs, 0g fat, 0g fiber',
+                ],
+                steps: const [
+                  'Use half the noodles if calories are tight.',
+                ],
+              ),
+              CoachSuggestion(
+                mealName: 'Turkey avocado sandwich',
+                timing: mealSlot,
+                why:
+                    'A more filling option with higher carbs and fats for a larger remaining window.',
+                calories: 610,
+                protein: 44,
+                carbs: 58,
+                fat: 22,
+                fiber: 10,
+                ingredients: const [
+                  '2 slices whole-grain bread',
+                  '150g sliced turkey breast',
+                  '50g avocado',
+                  'Salad vegetables',
+                ],
+                nutritionBreakdown: const [
+                  '2 slices whole-grain bread: 220 kcal, 10g protein, 38g carbs, 4g fat, 6g fiber',
+                  '150g sliced turkey breast: 180 kcal, 36g protein, 2g carbs, 3g fat, 0g fiber',
+                  '50g avocado: 80 kcal, 1g protein, 4g carbs, 7g fat, 3g fiber',
+                  'Salad vegetables and light spread: 70 kcal, 2g protein, 8g carbs, 4g fat, 1g fiber',
+                ],
+                steps: const [
+                  'Skip avocado or use one bread slice if you need a smaller meal.',
+                ],
+              ),
+            ]
+          : [
+              CoachSuggestion(
+                mealName: caloriesLeft <= 300
+                    ? 'Greek yogurt protein bowl'
+                    : 'Chicken rice power bowl',
+                timing: mealSlot,
+                why:
+                    'Fits the current calorie window while pushing protein toward your daily target.',
+                calories: light ? 245 : 588,
+                protein: light ? 28 : 54,
+                carbs: light ? 19 : 56,
+                fat: light ? 6 : 14,
+                fiber: light ? 4 : 8,
+                ingredients: light
+                    ? const [
+                        '250g Greek yogurt or skyr',
+                        '1 small serving berries',
+                        '10g nuts or seeds',
+                      ]
+                    : const [
+                        '150g grilled chicken breast',
+                        '150g cooked rice or potatoes',
+                        '2 cups vegetables',
+                        '1 tbsp olive oil or light sauce',
+                      ],
+                nutritionBreakdown: light
+                    ? const [
+                        '250g Greek yogurt or skyr: 150 kcal, 25g protein, 9g carbs, 1g fat, 0g fiber',
+                        '75g berries: 35 kcal, 1g protein, 8g carbs, 0g fat, 3g fiber',
+                        '10g nuts or seeds: 60 kcal, 2g protein, 2g carbs, 5g fat, 1g fiber',
+                      ]
+                    : const [
+                        '150g grilled chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber',
+                        '150g cooked rice or potatoes: 180 kcal, 4g protein, 40g carbs, 0g fat, 2g fiber',
+                        '2 cups vegetables: 70 kcal, 4g protein, 14g carbs, 0g fat, 6g fiber',
+                        '1 tbsp olive oil or light sauce: 90 kcal, 0g protein, 2g carbs, 9g fat, 0g fiber',
+                      ],
+                steps: const [
+                  'Adjust the carb portion up or down to match your remaining calories.',
+                ],
+              ),
+              CoachSuggestion(
+                mealName: 'Tuna and egg salad plate',
+                timing: mealSlot,
+                why:
+                    'A high-protein option that stays flexible if you are short on calories or carbs.',
+                calories: 410,
+                protein: 51,
+                carbs: 17,
+                fat: 14,
+                fiber: 6,
+                ingredients: const [
+                  '1 can tuna or salmon',
+                  '2 boiled eggs',
+                  'Large salad vegetables',
+                  'Light dressing or yogurt sauce',
+                ],
+                nutritionBreakdown: const [
+                  '1 can tuna or salmon: 150 kcal, 32g protein, 0g carbs, 2g fat, 0g fiber',
+                  '2 boiled eggs: 140 kcal, 12g protein, 1g carbs, 10g fat, 0g fiber',
+                  'Large salad vegetables: 70 kcal, 4g protein, 12g carbs, 0g fat, 5g fiber',
+                  'Light dressing or yogurt sauce: 50 kcal, 3g protein, 4g carbs, 2g fat, 1g fiber',
+                ],
+                steps: const [
+                  'Add bread, rice cakes, or fruit only if carbs remain.'
+                ],
+              ),
+              CoachSuggestion(
+                mealName: 'Lean protein wrap',
+                timing: mealSlot,
+                why:
+                    'Easy to prepare or order, with controlled portions and a balanced macro profile.',
+                calories: 425,
+                protein: 39,
+                carbs: 46,
+                fat: 10,
+                fiber: 8,
+                ingredients: const [
+                  '1 whole-grain wrap',
+                  '120g lean turkey, chicken, tofu, or beans',
+                  'Crunchy vegetables',
+                  'Low-fat yogurt sauce or salsa',
+                ],
+                nutritionBreakdown: const [
+                  '1 whole-grain wrap: 180 kcal, 6g protein, 30g carbs, 4g fat, 4g fiber',
+                  '120g lean turkey, chicken, tofu, or beans: 170 kcal, 28g protein, 4g carbs, 5g fat, 1g fiber',
+                  'Crunchy vegetables: 40 kcal, 2g protein, 8g carbs, 0g fat, 3g fiber',
+                  'Low-fat yogurt sauce or salsa: 35 kcal, 3g protein, 4g carbs, 1g fat, 0g fiber',
+                ],
+                steps: const [
+                  'Skip cheese or heavy sauces if fat is nearly used up.'
+                ],
+              ),
+            ],
+    );
+  }
+
+  double _num(dynamic value, double fallback) {
+    if (value is num && value.isFinite) return value.toDouble();
+    return fallback;
+  }
+
+  String _cleanExceptionText(String text) {
+    final cleaned = text
+        .replaceFirst('Exception: ', '')
+        .replaceFirst(RegExp(r'Source stack:[\s\S]*'), '')
+        .trim();
+    return cleaned.isEmpty
+        ? 'The request failed. Try again in a moment.'
+        : cleaned;
   }
 }
 

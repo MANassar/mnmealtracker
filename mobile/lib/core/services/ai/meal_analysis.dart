@@ -127,6 +127,7 @@ class CoachSuggestion {
   final double fat;
   final double fiber;
   final List<String> ingredients;
+  final List<String> nutritionBreakdown;
   final List<String> steps;
 
   const CoachSuggestion({
@@ -139,24 +140,32 @@ class CoachSuggestion {
     required this.fat,
     required this.fiber,
     this.ingredients = const [],
+    this.nutritionBreakdown = const [],
     this.steps = const [],
   });
 
   factory CoachSuggestion.fromJson(Map<String, dynamic> json) =>
       CoachSuggestion(
-        mealName: json['mealName'] as String? ?? 'Suggested meal',
-        timing: json['timing'] as String? ?? '',
-        why: json['why'] as String? ?? '',
+        mealName: _coachCopy(json['mealName'] as String? ?? 'Suggested meal'),
+        timing: _coachCopy(json['timing'] as String? ?? ''),
+        why: _coachCopy(json['why'] as String? ?? ''),
         calories: (json['calories'] as num?)?.toDouble() ?? 0,
         protein: (json['protein'] as num?)?.toDouble() ?? 0,
         carbs: (json['carbs'] as num?)?.toDouble() ?? 0,
         fat: (json['fat'] as num?)?.toDouble() ?? 0,
         fiber: (json['fiber'] as num?)?.toDouble() ?? 0,
-        ingredients:
-            (json['ingredients'] as List?)?.map((e) => e.toString()).toList() ??
-                [],
-        steps:
-            (json['steps'] as List?)?.map((e) => e.toString()).toList() ?? [],
+        ingredients: (json['ingredients'] as List?)
+                ?.map((e) => _coachCopy(e.toString()))
+                .toList() ??
+            [],
+        nutritionBreakdown: (json['nutritionBreakdown'] as List?)
+                ?.map((e) => _coachCopy(e.toString()))
+                .toList() ??
+            [],
+        steps: (json['steps'] as List?)
+                ?.map((e) => _coachCopy(e.toString()))
+                .toList() ??
+            [],
       );
 }
 
@@ -174,9 +183,9 @@ class CoachPlan {
   });
 
   factory CoachPlan.fromJson(Map<String, dynamic> json) => CoachPlan(
-        summary: json['summary'] as String? ?? '',
-        focus: json['focus'] as String? ?? '',
-        caution: json['caution'] as String? ?? '',
+        summary: _coachCopy(json['summary'] as String? ?? ''),
+        focus: _coachCopy(json['focus'] as String? ?? ''),
+        caution: _coachCopy(json['caution'] as String? ?? ''),
         suggestions: (json['suggestions'] as List?)
                 ?.whereType<Map>()
                 .map((e) =>
@@ -184,4 +193,18 @@ class CoachPlan {
                 .toList() ??
             [],
       );
+}
+
+String _coachCopy(String value) {
+  return value
+      .replaceAll(RegExp(r'\b[Tt]he user has\b'), 'You have')
+      .replaceAll(RegExp(r'\b[Tt]he user is\b'), 'You are')
+      .replaceAll(RegExp(r'\b[Tt]he user should\b'), 'You should')
+      .replaceAll(RegExp(r'\b[Tt]he user needs\b'), 'You need')
+      .replaceAll(RegExp(r'\b[Tt]he user\b'), 'you')
+      .replaceAll(RegExp(r'\bUser has\b'), 'You have')
+      .replaceAll(RegExp(r'\bUser is\b'), 'You are')
+      .replaceAll(RegExp(r'\bUser should\b'), 'You should')
+      .replaceAll(RegExp(r'\bUser needs\b'), 'You need')
+      .replaceAll(RegExp(r'\bUser\b'), 'You');
 }
