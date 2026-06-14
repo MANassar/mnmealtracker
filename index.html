@@ -521,7 +521,7 @@ const COACH_PROMPT = context =>
 Context: ${JSON.stringify(context)}
 Write directly to the person using friendly second-person language: say "you" and "your". Never refer to them as "the user" or "User".
 Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.
-Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals or any meal listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one lighter/high-protein option, one balanced moderate option, and one higher-calorie or higher-carb option when the remaining targets allow it.
+Suggest realistic meals for the next eating occasion, not a full generic meal plan. At least 1 suggestion should be the same as, or clearly inspired by, something in recentMeals when recentMeals is not empty; adjust portions or sides to better fit today. Avoid repeating meals listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one familiar option, one lighter/high-protein option, and one balanced or higher-carb option when the remaining targets allow it.
 For every suggestion, explain how the total calories and macros were obtained with ingredient-level estimates. The totals must approximately equal the ingredient breakdown.
 Return ONLY a raw JSON object — no markdown, no explanation:
 {"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["150g chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber","150g cooked rice: 195 kcal, 4g protein, 43g carbs, 0g fat, 1g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
@@ -1648,6 +1648,22 @@ const localCoachPlan = context => {
   const caloriesLeft = Number.isFinite(Number(remaining.calories)) ? Number(remaining.calories) : targets.calories;
   const light = caloriesLeft <= 300;
   const alreadySuggested = (context.alreadySuggestedMeals || []).length;
+  const recentMeal = (context.recentMeals || []).find(item => item?.mealName);
+  const familiarSuggestion = recentMeal ? {
+    mealName: `${recentMeal.mealName}, adjusted for today`,
+    timing,
+    why: 'This is close to something you already eat, with portions you can tweak to fit the rest of today.',
+    calories: Math.round(Number(recentMeal.calories) || 450),
+    protein: Math.round(Number(recentMeal.protein) || 30),
+    carbs: Math.round(Number(recentMeal.carbs) || 40),
+    fat: Math.round(Number(recentMeal.fat) || 15),
+    fiber: Math.round(Number(recentMeal.fiber) || 5),
+    ingredients: (recentMeal.ingredients || []).length ? recentMeal.ingredients : [`A familiar portion of ${recentMeal.mealName}`],
+    nutritionBreakdown: [
+      `${recentMeal.mealName} based on your recent log: ${Math.round(Number(recentMeal.calories) || 450)} kcal, ${Math.round(Number(recentMeal.protein) || 30)}g protein, ${Math.round(Number(recentMeal.carbs) || 40)}g carbs, ${Math.round(Number(recentMeal.fat) || 15)}g fat, ${Math.round(Number(recentMeal.fiber) || 5)}g fiber`,
+    ],
+    steps: ['Keep the familiar base, then reduce or add the carb/fat side depending on your remaining targets.'],
+  } : null;
   return {
     summary: 'The coach server is not ready for this app build yet, so this is a local suggestion based on your remaining targets.',
     focus: caloriesLeft <= 300
@@ -1709,6 +1725,7 @@ const localCoachPlan = context => {
         steps: ['Skip avocado or use one bread slice if you need a smaller meal.'],
       },
     ] : [
+      ...(familiarSuggestion ? [familiarSuggestion] : []),
       {
         mealName: caloriesLeft <= 300 ? 'Greek yogurt protein bowl' : 'Chicken rice power bowl',
         timing,

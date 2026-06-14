@@ -45,7 +45,7 @@ String _coachPrompt(Map<String, dynamic> context) =>
     'Context: ${jsonEncode(context)}\n'
     'Write directly to the person using friendly second-person language: say "you" and "your". Never refer to them as "the user" or "User".\n'
     'Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.\n'
-    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals or any meal listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one lighter/high-protein option, one balanced moderate option, and one higher-calorie or higher-carb option when the remaining targets allow it.\n'
+    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. At least 1 suggestion should be the same as, or clearly inspired by, something in recentMeals when recentMeals is not empty; adjust portions or sides to better fit today. Avoid repeating meals listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one familiar option, one lighter/high-protein option, and one balanced or higher-carb option when the remaining targets allow it.\n'
     'For every suggestion, explain how the total calories and macros were obtained with ingredient-level estimates. The totals must approximately equal the ingredient breakdown.\n'
     'Return ONLY a raw JSON object — no markdown, no explanation:\n'
     '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["150g chicken breast: 248 kcal, 46g protein, 0g carbs, 5g fat, 0g fiber","150g cooked rice: 195 kcal, 4g protein, 43g carbs, 0g fat, 1g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
@@ -559,6 +559,7 @@ class AiService {
     final light = caloriesLeft <= 300;
     final alreadySuggested =
         (context['alreadySuggestedMeals'] as List?)?.length ?? 0;
+    final recentMeal = _recentMealSuggestion(context, mealSlot);
 
     return CoachPlan(
       summary:
@@ -648,6 +649,7 @@ class AiService {
               ),
             ]
           : [
+              if (recentMeal != null) recentMeal,
               CoachSuggestion(
                 mealName: caloriesLeft <= 300
                     ? 'Greek yogurt protein bowl'
@@ -741,6 +743,55 @@ class AiService {
                 ],
               ),
             ],
+    );
+  }
+
+  CoachSuggestion? _recentMealSuggestion(
+    Map<String, dynamic> context,
+    String mealSlot,
+  ) {
+    final recentMeals = context['recentMeals'];
+    if (recentMeals is! List || recentMeals.isEmpty) return null;
+    Map? raw;
+    for (final item in recentMeals) {
+      if (item is Map) {
+        raw = item;
+        break;
+      }
+    }
+    if (raw == null) return null;
+    final name = raw['mealName']?.toString().trim();
+    if (name == null || name.isEmpty) return null;
+    final calories = _num(raw['calories'], 450).clamp(180, 750).toDouble();
+    final protein = _num(raw['protein'], 30).clamp(5, 70).toDouble();
+    final carbs = _num(raw['carbs'], 40).clamp(0, 100).toDouble();
+    final fat = _num(raw['fat'], 15).clamp(0, 45).toDouble();
+    final fiber = _num(raw['fiber'], 5).clamp(0, 20).toDouble();
+    final ingredients = (raw['ingredients'] as List?)
+            ?.map((e) => e.toString())
+            .where((e) => e.trim().isNotEmpty)
+            .take(4)
+            .toList() ??
+        const <String>[];
+
+    return CoachSuggestion(
+      mealName: '$name, adjusted for today',
+      timing: mealSlot,
+      why:
+          'This is close to something you already eat, with portions you can tweak to fit the rest of today.',
+      calories: calories,
+      protein: protein,
+      carbs: carbs,
+      fat: fat,
+      fiber: fiber,
+      ingredients:
+          ingredients.isEmpty ? ['A familiar portion of $name'] : ingredients,
+      nutritionBreakdown: [
+        '$name based on your recent log: ${calories.round()} kcal, ${protein.round()}g protein, ${carbs.round()}g carbs, ${fat.round()}g fat, ${fiber.round()}g fiber',
+      ],
+      steps: const [
+        'Keep the familiar base, then reduce or add the carb/fat side depending on your remaining targets.',
+      ],
     );
   }
 
