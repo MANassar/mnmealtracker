@@ -108,6 +108,181 @@ class WeightsNotifier extends StateNotifier<List<WeightEntry>> {
 
 final aiServiceProvider = Provider((_) => AiService());
 
+// ── Global user values ─────────────────────────────────────────────────────
+
+const double kgToLbs = 2.20462262;
+const double lbsToKg = 0.45359237;
+
+final userValuesProvider = Provider<UserValues>((ref) {
+  final settings = ref.watch(settingsProvider);
+  final weights = ref.watch(weightsProvider);
+  return UserValues.from(settings: settings, weights: weights);
+});
+
+class MacroTargets {
+  final double calories;
+  final double protein;
+  final double carbs;
+  final double fat;
+  final double? fiber;
+
+  const MacroTargets({
+    required this.calories,
+    required this.protein,
+    required this.carbs,
+    required this.fat,
+    this.fiber,
+  });
+
+  factory MacroTargets.fromSettings(AppSettings settings) => MacroTargets(
+        calories: settings.goalCalories ?? 1800,
+        protein: settings.goalProtein ?? 150,
+        carbs: settings.goalCarbs ?? 180,
+        fat: settings.goalFat ?? 60,
+        fiber: settings.goalFiber,
+      );
+
+  Map<String, double> toRequiredMap() => {
+        'calories': calories,
+        'protein': protein,
+        'carbs': carbs,
+        'fat': fat,
+      };
+}
+
+class UserWeightValue {
+  final double kg;
+  final double display;
+  final String unit;
+  final String? date;
+  final String source;
+
+  const UserWeightValue({
+    required this.kg,
+    required this.display,
+    required this.unit,
+    required this.source,
+    this.date,
+  });
+
+  String label({bool includeSource = false}) {
+    final suffix = includeSource && source == 'macroProfile' ? ' setup' : '';
+    return '${display.toStringAsFixed(1)} $unit$suffix';
+  }
+
+  Map<String, dynamic> toJson() => {
+        'kg': kg,
+        'display': display,
+        'unit': unit,
+        'date': date,
+        'source': source,
+      };
+}
+
+class UserValues {
+  final AppSettings settings;
+  final String weightUnit;
+  final MacroTargets targets;
+  final UserWeightValue? currentWeight;
+  final double? goalWeightKg;
+  final MacroProfile? macroProfile;
+  final MacroRecommendation? macroRecommendation;
+
+  const UserValues({
+    required this.settings,
+    required this.weightUnit,
+    required this.targets,
+    required this.currentWeight,
+    required this.goalWeightKg,
+    required this.macroProfile,
+    required this.macroRecommendation,
+  });
+
+  factory UserValues.from({
+    required AppSettings settings,
+    required List<WeightEntry> weights,
+  }) {
+    final latestWeight = _latestWeight(weights);
+    final profileWeight = settings.macroProfile?.weight;
+    final profileWeightUnit =
+        settings.macroProfile?.weightUnit ?? settings.weightUnit;
+    final profileWeightKg = profileWeight == null
+        ? null
+        : profileWeightUnit == 'lbs'
+            ? profileWeight * lbsToKg
+            : profileWeight;
+    return UserValues(
+      settings: settings,
+      weightUnit: settings.weightUnit,
+      targets: MacroTargets.fromSettings(settings),
+      currentWeight: latestWeight != null
+          ? UserWeightValue(
+              kg: latestWeight.weight,
+              display: settings.weightUnit == 'lbs'
+                  ? latestWeight.weight * kgToLbs
+                  : latestWeight.weight,
+              unit: settings.weightUnit,
+              date: latestWeight.date,
+              source: 'weightLog',
+            )
+          : profileWeightKg != null && profileWeightKg > 0
+              ? UserWeightValue(
+                  kg: profileWeightKg,
+                  display: settings.weightUnit == 'lbs'
+                      ? profileWeightKg * kgToLbs
+                      : profileWeightKg,
+                  unit: settings.weightUnit,
+                  date: settings.macroProfile?.updatedAt,
+                  source: 'macroProfile',
+                )
+              : null,
+      goalWeightKg: settings.goalWeight,
+      macroProfile: settings.macroProfile,
+      macroRecommendation: settings.macroRecommendation,
+    );
+  }
+
+  String get weightLabel =>
+      currentWeight?.label(includeSource: true) ?? 'No weight yet';
+
+  String get goalLabel => macroProfile?.goal ?? 'targets';
+
+  MacroRecommendation? get recommendationForDisplay =>
+      macroRecommendation ??
+      (settings.goalCalories != null &&
+              settings.goalProtein != null &&
+              settings.goalCarbs != null &&
+              settings.goalFat != null
+          ? MacroRecommendation(
+              calories: settings.goalCalories!,
+              protein: settings.goalProtein!,
+              carbs: settings.goalCarbs!,
+              fat: settings.goalFat!,
+              method: 'Using your saved daily targets.',
+            )
+          : null);
+
+  Map<String, dynamic> toCoachUserJson() => {
+        'weightUnit': weightUnit,
+        'latestWeight': currentWeight?.toJson(),
+        'goalWeightKg': goalWeightKg,
+        'macroProfile': macroProfile?.toJson(),
+        'macroRecommendation': macroRecommendation?.toJson(),
+        'country': null,
+        'fitness': {
+          'available': false,
+          'exercises': <String>[],
+        },
+      };
+}
+
+WeightEntry? _latestWeight(List<WeightEntry> weights) {
+  if (weights.isEmpty) return null;
+  final sorted = [...weights]
+    ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  return sorted.first;
+}
+
 // ── Derived ────────────────────────────────────────────────────────────────
 
 final todayMealsProvider = Provider<List<Meal>>((ref) {

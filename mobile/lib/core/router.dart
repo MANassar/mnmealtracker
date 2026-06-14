@@ -1,5 +1,9 @@
+import 'dart:math' as math;
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../features/coach/coach_screen.dart';
 import '../features/history/history_screen.dart';
@@ -70,22 +74,57 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final currentIndex = _indexForLocation(location);
     final c = context.appColors;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
+    return GlassScaffold(
       backgroundColor: c.bg,
+      statusBarStyle: GlassStatusBarStyle.auto,
+      bottomBar: GlassBottomBar(
+        tabs: const [
+          GlassBottomBarTab(
+            label: 'Home',
+            icon: Icon(CupertinoIcons.house),
+            activeIcon: Icon(CupertinoIcons.house_fill),
+          ),
+          GlassBottomBarTab(
+            label: 'History',
+            icon: Icon(CupertinoIcons.list_bullet),
+          ),
+          GlassBottomBarTab(
+            label: 'Weight',
+            icon: Icon(CupertinoIcons.chart_bar_square),
+            activeIcon: Icon(CupertinoIcons.chart_bar_square_fill),
+          ),
+          GlassBottomBarTab(
+            label: 'Coach',
+            icon: Icon(CupertinoIcons.sparkles),
+          ),
+        ],
+        selectedIndex: currentIndex,
+        onTabSelected: (i) => _onTap(context, i),
+        selectedIconColor: c.accent,
+        unselectedIconColor: c.muted,
+        settings: isDark
+            ? const LiquidGlassSettings(
+                thickness: 30,
+                blur: 3,
+                chromaticAberration: 0.3,
+                lightIntensity: 0.4,
+                refractiveIndex: 1.59,
+                saturation: 0.7,
+                ambientStrength: 0.0,
+                lightAngle: 0.75 * math.pi,
+                glassColor: Color(0x14FFFFFF),
+              )
+            : null,
+        extraButton: GlassBottomBarExtraButton(
+          icon: const Icon(CupertinoIcons.add),
+          label: 'Add Meal',
+          onTap: () => context.push('/add'),
+          iconColor: isDark ? Colors.white : AppColors.darkBg,
+        ),
+      ),
       body: child,
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => context.push('/add'),
-        backgroundColor: c.accent,
-        foregroundColor: AppColors.darkBg,
-        elevation: 8,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.add, size: 30),
-      ),
-      bottomNavigationBar: _PwaTabBar(
-        currentIndex: currentIndex,
-        onTap: (i) => _onTap(context, i),
-      ),
     );
   }
 
@@ -111,95 +150,5 @@ class AppShell extends StatelessWidget {
         context.go('/coach');
         break;
     }
-  }
-}
-
-class _PwaTabBar extends StatelessWidget {
-  final int currentIndex;
-  final ValueChanged<int> onTap;
-
-  const _PwaTabBar({
-    required this.currentIndex,
-    required this.onTap,
-  });
-
-  static const _items = [
-    ('◉', 'Home'),
-    ('≡', 'History'),
-    ('⚖', 'Weight'),
-    ('✦', 'Coach'),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.appColors;
-    return SafeArea(
-      top: false,
-      child: Container(
-        height: 64,
-        decoration: BoxDecoration(
-          color: c.bg.withValues(alpha: 0.97),
-          border: Border(top: BorderSide(color: c.border)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 20,
-              offset: const Offset(0, -8),
-            ),
-          ],
-        ),
-        child: Row(
-          children: List.generate(_items.length, (i) {
-            final active = i == currentIndex;
-            final item = _items[i];
-            return Expanded(
-              child: InkWell(
-                onTap: () => onTap(i),
-                child: Container(
-                  color: active
-                      ? c.accent.withValues(alpha: 0.12)
-                      : Colors.transparent,
-                  padding: const EdgeInsets.fromLTRB(0, 10, 0, 8),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        item.$1,
-                        style: TextStyle(
-                          color: active ? c.accent : c.muted,
-                          fontSize: 17,
-                          height: 1,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        item.$2.toUpperCase(),
-                        style: TextStyle(
-                          color: active ? c.accent : c.muted,
-                          fontSize: 10,
-                          fontWeight:
-                              active ? FontWeight.w700 : FontWeight.w500,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 160),
-                        width: active ? 18 : 0,
-                        height: 2,
-                        decoration: BoxDecoration(
-                          color: c.accent,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
-    );
   }
 }

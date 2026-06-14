@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../core/models/meal.dart';
 import '../../core/providers.dart';
@@ -14,177 +15,188 @@ class TodayScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final meals = ref.watch(todayMealsProvider);
-    final settings = ref.watch(settingsProvider);
+    final userValues = ref.watch(userValuesProvider);
     final c = context.appColors;
 
     final totalCals = meals.fold<double>(0.0, (s, m) => s + m.calories);
     final totalP = meals.fold<double>(0.0, (s, m) => s + m.protein);
     final totalC = meals.fold<double>(0.0, (s, m) => s + m.carbs);
     final totalF = meals.fold<double>(0.0, (s, m) => s + m.fat);
-    final goalCalories = settings.goalCalories ?? 1800;
-    final goalProtein = settings.goalProtein ?? 150;
-    final goalCarbs = settings.goalCarbs ?? 180;
-    final goalFat = settings.goalFat ?? 60;
+    final goalCalories = userValues.targets.calories;
+    final goalProtein = userValues.targets.protein;
+    final goalCarbs = userValues.targets.carbs;
+    final goalFat = userValues.targets.fat;
     final remaining = goalCalories - totalCals;
     final sortedMeals = [...meals]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-    return Scaffold(
-      backgroundColor: c.bg,
-      body: Column(
-        children: [
-          PwaTopBar(
-            eyebrow: _todayLabel(),
-            onSettings: () => context.push('/settings'),
-          ),
-          Expanded(
-            child: CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Column(
-                    children: [
-                      const SizedBox(height: 16),
-                      CalorieRing(
-                        consumed: totalCals,
-                        target: goalCalories,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        remaining >= 0
-                            ? '${remaining.round()} kcal remaining'
-                            : '${remaining.abs().round()} kcal over target',
-                        style: TextStyle(
-                          color: remaining >= 0 ? c.mint : c.danger,
-                          fontSize: 12,
-                          fontFamily: 'DM Mono',
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
-                        child: Row(
-                          children: [
-                            MacroProgressBar(
-                              label: 'Protein',
-                              value: totalP,
-                              max: goalProtein,
-                              color: c.mint,
-                            ),
-                            const SizedBox(width: 14),
-                            MacroProgressBar(
-                              label: 'Carbs',
-                              value: totalC,
-                              max: goalCarbs,
-                              color: c.sky,
-                            ),
-                            const SizedBox(width: 14),
-                            MacroProgressBar(
-                              label: 'Fat',
-                              value: totalF,
-                              max: goalFat,
-                              color: c.peach,
-                            ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                meals.isEmpty
-                                    ? 'No meals logged yet'
-                                    : '${meals.length} Meal${meals.length > 1 ? 's' : ''} today',
-                                style: TextStyle(
-                                  color: c.muted,
-                                  fontFamily: 'Playfair Display',
-                                  fontSize: 12,
-                                  letterSpacing: 1.2,
-                                ),
-                              ),
-                            ),
-                            if (meals.isNotEmpty)
-                              Text(
-                                '${totalP.toStringAsFixed(0)}P·${totalC.toStringAsFixed(0)}C·${totalF.toStringAsFixed(0)}F',
-                                style: TextStyle(
-                                  color: c.muted,
-                                  fontSize: 10,
-                                  fontFamily: 'DM Mono',
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (meals.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 120),
-                      child: Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '🍽',
-                              style: TextStyle(
-                                fontSize: 36,
-                                color: c.muted.withValues(alpha: 0.6),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Text.rich(
-                              TextSpan(
-                                text: 'Tap ',
-                                children: [
-                                  TextSpan(
-                                    text: '+',
-                                    style: TextStyle(color: c.accent),
-                                  ),
-                                  const TextSpan(
-                                      text: ' to log your first meal'),
-                                ],
-                              ),
-                              style: TextStyle(color: c.muted, fontSize: 14),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, i) {
-                          final meal = sortedMeals[i];
-                          return MealCard(
-                            meal: meal,
-                            onEdit: () => context.push('/add', extra: {
-                              'editingMeal': meal,
-                              'returnPath': '/today',
-                            }),
-                            onDelete: () => _confirmDelete(context, ref, meal),
-                            onLogAgain: () => context.push('/add', extra: {
-                              'repeatMeal': meal,
-                              'returnPath': '/today',
-                            }),
-                          );
-                        },
-                        childCount: sortedMeals.length,
-                      ),
-                    ),
-                  ),
-              ],
+    return SizedBox.expand(
+        child: Column(
+      children: [
+        GlassAppBar(
+          centerTitle: false,
+          title: Text(
+            _todayLabel(),
+            style: TextStyle(
+              color: c.muted,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.8,
             ),
           ),
-        ],
-      ),
-    );
+          actions: [
+            IconButton(
+              onPressed: () => context.push('/settings'),
+              icon: Icon(Icons.settings_outlined, color: c.muted),
+            ),
+          ],
+        ),
+        Expanded(
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: Column(
+                  children: [
+                    const SizedBox(height: 16),
+                    CalorieRing(
+                      consumed: totalCals,
+                      target: goalCalories,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      remaining >= 0
+                          ? '${remaining.round()} kcal remaining'
+                          : '${remaining.abs().round()} kcal over target',
+                      style: TextStyle(
+                        color: remaining >= 0 ? c.mint : c.danger,
+                        fontSize: 12,
+                        fontFamily: 'DM Mono',
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                      child: Row(
+                        children: [
+                          MacroProgressBar(
+                            label: 'Protein',
+                            value: totalP,
+                            max: goalProtein,
+                            color: c.mint,
+                          ),
+                          const SizedBox(width: 14),
+                          MacroProgressBar(
+                            label: 'Carbs',
+                            value: totalC,
+                            max: goalCarbs,
+                            color: c.sky,
+                          ),
+                          const SizedBox(width: 14),
+                          MacroProgressBar(
+                            label: 'Fat',
+                            value: totalF,
+                            max: goalFat,
+                            color: c.peach,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              meals.isEmpty
+                                  ? 'No meals logged yet'
+                                  : '${meals.length} Meal${meals.length > 1 ? 's' : ''} today',
+                              style: TextStyle(
+                                color: c.muted,
+                                fontFamily: 'Playfair Display',
+                                fontSize: 12,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                          ),
+                          if (meals.isNotEmpty)
+                            Text(
+                              '${totalP.toStringAsFixed(0)}P·${totalC.toStringAsFixed(0)}C·${totalF.toStringAsFixed(0)}F',
+                              style: TextStyle(
+                                color: c.muted,
+                                fontSize: 10,
+                                fontFamily: 'DM Mono',
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (meals.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 120),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '🍽',
+                            style: TextStyle(
+                              fontSize: 36,
+                              color: c.muted.withValues(alpha: 0.6),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text.rich(
+                            TextSpan(
+                              text: 'Tap ',
+                              children: [
+                                TextSpan(
+                                  text: '+',
+                                  style: TextStyle(color: c.accent),
+                                ),
+                                const TextSpan(text: ' to log your first meal'),
+                              ],
+                            ),
+                            style: TextStyle(color: c.muted, fontSize: 14),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) {
+                        final meal = sortedMeals[i];
+                        return MealCard(
+                          meal: meal,
+                          onEdit: () => context.push('/add', extra: {
+                            'editingMeal': meal,
+                            'returnPath': '/today',
+                          }),
+                          onDelete: () => _confirmDelete(context, ref, meal),
+                          onLogAgain: () => context.push('/add', extra: {
+                            'repeatMeal': meal,
+                            'returnPath': '/today',
+                          }),
+                        );
+                      },
+                      childCount: sortedMeals.length,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    ));
   }
 
   String _todayLabel() {

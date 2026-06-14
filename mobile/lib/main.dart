@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'core/providers.dart';
 import 'core/repositories/isar_repository.dart';
@@ -8,8 +9,13 @@ import 'core/theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await LiquidGlassWidgets.initialize();
   await IsarRepository.init();
-  runApp(const ProviderScope(child: MnMealTrackerApp()));
+  runApp(
+    LiquidGlassWidgets.wrap(
+      child: const ProviderScope(child: MnMealTrackerApp()),
+    ),
+  );
 }
 
 class MnMealTrackerApp extends ConsumerWidget {

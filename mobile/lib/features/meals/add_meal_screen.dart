@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -371,24 +372,24 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
     final title = _isEditing ? 'Edit Meal' : 'Add Meal';
     final previousMeals = _previousMeals(ref.watch(mealsProvider));
 
-    return Scaffold(
+    return GlassScaffold(
       backgroundColor: c.bg,
+      statusBarStyle: GlassStatusBarStyle.auto,
+      extendBody: false,
+      appBar: GlassAppBar(
+        title: Text(title),
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: c.muted),
+          onPressed: () => context.go(widget.returnPath),
+          style: IconButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+        actions: [_ProviderPill(provider: ref.watch(settingsProvider).provider)],
+      ),
       body: Column(
         children: [
-          PwaTopBar(
-            title: title,
-            showBorder: true,
-            leading: IconButton(
-              icon: Icon(Icons.arrow_back, color: c.muted),
-              onPressed: () => context.go(widget.returnPath),
-              style: IconButton.styleFrom(
-                minimumSize: const Size(44, 44),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-            trailing:
-                _ProviderPill(provider: ref.watch(settingsProvider).provider),
-          ),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),

@@ -39,6 +39,9 @@ dependencies:
   # Charts
   fl_chart: ^1.2.0
 
+  # UI
+  liquid_glass_widgets: ^0.16.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

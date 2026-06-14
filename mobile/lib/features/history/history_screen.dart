@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
@@ -31,6 +32,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     final allMeals = ref.watch(mealsProvider);
     final weights = ref.watch(weightsProvider);
     final settings = ref.watch(settingsProvider);
+    final userValues = ref.watch(userValuesProvider);
     final c = context.appColors;
 
     final grouped = <String, List<Meal>>{};
@@ -39,227 +41,209 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     }
     final dates = _datesFor(grouped, weights);
 
-    return Scaffold(
-      backgroundColor: c.bg,
-      body: Column(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'History',
-                          style: TextStyle(
-                            color: c.text,
-                            fontFamily: 'Playfair Display',
-                            fontSize: 24,
-                          ),
-                        ),
-                      ),
-                      PopupMenuButton<String>(
-                        icon: Icon(Icons.more_vert, color: c.muted),
-                        color: c.card,
-                        onSelected: (v) => _onMenu(context, ref, v),
-                        itemBuilder: (_) => [
-                          PopupMenuItem(
-                            value: 'export',
-                            child: Text('Export backup',
-                                style: TextStyle(color: c.text)),
-                          ),
-                          PopupMenuItem(
-                            value: 'import',
-                            child: Text('Import backup',
-                                style: TextStyle(color: c.text)),
-                          ),
-                          PopupMenuItem(
-                            value: 'clear',
-                            child: Text('Clear all meals',
-                                style: TextStyle(color: c.text)),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      _FilterPill(
-                        label: 'All',
-                        active: _filter == 'all',
-                        onTap: () => setState(() => _filter = 'all'),
-                      ),
-                      const SizedBox(width: 8),
-                      _FilterPill(
-                        label: 'Meals',
-                        active: _filter == 'meals',
-                        onTap: () => setState(() => _filter = 'meals'),
-                      ),
-                      const SizedBox(width: 8),
-                      _FilterPill(
-                        label: 'Weight',
-                        active: _filter == 'weight',
-                        onTap: () => setState(() => _filter = 'weight'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+    return SizedBox.expand(
+        child: Column(
+      children: [
+        GlassAppBar(
+          centerTitle: false,
+          title: Text(
+            'History',
+            style: TextStyle(
+              color: c.text,
+              fontFamily: 'Playfair Display',
+              fontSize: 24,
             ),
           ),
-          Expanded(
-            child: allMeals.isEmpty && weights.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.history,
-                          size: 48,
-                          color: c.muted.withValues(alpha: 0.4),
-                        ),
-                        const SizedBox(height: 12),
-                        Text('Meals will appear here after you log them.',
-                            style: TextStyle(color: c.muted)),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                    itemCount: dates.length,
-                    itemBuilder: (context, i) {
-                      final date = dates[i];
-                      final showMeals = _filter == 'all' || _filter == 'meals';
-                      final showWeight =
-                          _filter == 'all' || _filter == 'weight';
-                      final meals =
-                          showMeals ? (grouped[date] ?? []) : <Meal>[];
-                      final dayWeight = showWeight
-                          ? _firstWeightForDate(weights, date)
-                          : null;
-                      if (meals.isEmpty && dayWeight == null) {
-                        return const SizedBox.shrink();
-                      }
-                      final totalCal =
-                          meals.fold<double>(0.0, (s, m) => s + m.calories);
-                      final totalP =
-                          meals.fold<double>(0.0, (s, m) => s + m.protein);
-                      final totalC =
-                          meals.fold<double>(0.0, (s, m) => s + m.carbs);
-                      final totalF =
-                          meals.fold<double>(0.0, (s, m) => s + m.fat);
-                      final targetCalories = settings.goalCalories ?? 1800;
-                      final over = totalCal > targetCalories;
-                      final sortedMeals = [...meals]
-                        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          actions: [
+            PopupMenuButton<String>(
+              icon: Icon(Icons.more_vert, color: c.muted),
+              color: c.card,
+              onSelected: (v) => _onMenu(context, ref, v),
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'export',
+                  child: Text('Export backup', style: TextStyle(color: c.text)),
+                ),
+                PopupMenuItem(
+                  value: 'import',
+                  child: Text('Import backup', style: TextStyle(color: c.text)),
+                ),
+                PopupMenuItem(
+                  value: 'clear',
+                  child:
+                      Text('Clear all meals', style: TextStyle(color: c.text)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: Row(
+            children: [
+              _FilterPill(
+                label: 'All',
+                active: _filter == 'all',
+                onTap: () => setState(() => _filter = 'all'),
+              ),
+              const SizedBox(width: 8),
+              _FilterPill(
+                label: 'Meals',
+                active: _filter == 'meals',
+                onTap: () => setState(() => _filter = 'meals'),
+              ),
+              const SizedBox(width: 8),
+              _FilterPill(
+                label: 'Weight',
+                active: _filter == 'weight',
+                onTap: () => setState(() => _filter = 'weight'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: allMeals.isEmpty && weights.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.history,
+                        size: 48,
+                        color: c.muted.withValues(alpha: 0.4),
+                      ),
+                      const SizedBox(height: 12),
+                      Text('Meals will appear here after you log them.',
+                          style: TextStyle(color: c.muted)),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                  itemCount: dates.length,
+                  itemBuilder: (context, i) {
+                    final date = dates[i];
+                    final showMeals = _filter == 'all' || _filter == 'meals';
+                    final showWeight = _filter == 'all' || _filter == 'weight';
+                    final meals = showMeals ? (grouped[date] ?? []) : <Meal>[];
+                    final dayWeight =
+                        showWeight ? _firstWeightForDate(weights, date) : null;
+                    if (meals.isEmpty && dayWeight == null) {
+                      return const SizedBox.shrink();
+                    }
+                    final totalCal =
+                        meals.fold<double>(0.0, (s, m) => s + m.calories);
+                    final totalP =
+                        meals.fold<double>(0.0, (s, m) => s + m.protein);
+                    final totalC =
+                        meals.fold<double>(0.0, (s, m) => s + m.carbs);
+                    final totalF = meals.fold<double>(0.0, (s, m) => s + m.fat);
+                    final targetCalories = userValues.targets.calories;
+                    final over = totalCal > targetCalories;
+                    final sortedMeals = [...meals]
+                      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8, top: 4),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _fmtDate(date),
-                                        style: TextStyle(
-                                          color: c.text,
-                                          fontFamily: 'Playfair Display',
-                                          fontSize: 17,
-                                        ),
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8, top: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _fmtDate(date),
+                                      style: TextStyle(
+                                        color: c.text,
+                                        fontFamily: 'Playfair Display',
+                                        fontSize: 17,
                                       ),
-                                      if (meals.isNotEmpty)
-                                        Text(
-                                          '${meals.length} Meal${meals.length == 1 ? '' : 's'}',
-                                          style: TextStyle(
-                                            color: c.muted,
-                                            fontSize: 10,
-                                            letterSpacing: 1,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                if (meals.isNotEmpty)
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
+                                    ),
+                                    if (meals.isNotEmpty)
                                       Text(
-                                        '${totalCal.round()} kcal',
-                                        style: TextStyle(
-                                          color: over ? c.danger : c.mint,
-                                          fontFamily: 'DM Mono',
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      Text(
-                                        '${totalP.toStringAsFixed(0)}P · ${totalC.toStringAsFixed(0)}C · ${totalF.toStringAsFixed(0)}F',
+                                        '${meals.length} Meal${meals.length == 1 ? '' : 's'}',
                                         style: TextStyle(
                                           color: c.muted,
-                                          fontFamily: 'DM Mono',
                                           fontSize: 10,
+                                          letterSpacing: 1,
                                         ),
                                       ),
-                                    ],
-                                  ),
-                              ],
-                            ),
-                          ),
-                          if (meals.isNotEmpty) ...[
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(1),
-                              child: LinearProgressIndicator(
-                                value:
-                                    (totalCal / targetCalories).clamp(0.0, 1.0),
-                                minHeight: 2,
-                                backgroundColor: c.card,
-                                valueColor: AlwaysStoppedAnimation(
-                                  over ? c.danger : c.accent,
+                                  ],
                                 ),
                               ),
+                              if (meals.isNotEmpty)
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      '${totalCal.round()} kcal',
+                                      style: TextStyle(
+                                        color: over ? c.danger : c.mint,
+                                        fontFamily: 'DM Mono',
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${totalP.toStringAsFixed(0)}P · ${totalC.toStringAsFixed(0)}C · ${totalF.toStringAsFixed(0)}F',
+                                      style: TextStyle(
+                                        color: c.muted,
+                                        fontFamily: 'DM Mono',
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                        if (meals.isNotEmpty) ...[
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(1),
+                            child: LinearProgressIndicator(
+                              value:
+                                  (totalCal / targetCalories).clamp(0.0, 1.0),
+                              minHeight: 2,
+                              backgroundColor: c.card,
+                              valueColor: AlwaysStoppedAnimation(
+                                over ? c.danger : c.accent,
+                              ),
                             ),
-                            const SizedBox(height: 8),
-                          ],
-                          if (dayWeight != null)
-                            _HistoryWeightCard(
-                              entry: dayWeight,
-                              unit: settings.weightUnit,
-                              onDelete: () =>
-                                  _confirmDeleteWeight(context, ref, dayWeight),
-                            ),
-                          ...sortedMeals.map((meal) => MealCard(
-                                meal: meal,
-                                onEdit: () => context.push('/add', extra: {
-                                  'editingMeal': meal,
-                                  'returnPath': '/history',
-                                }),
-                                onDelete: () =>
-                                    _confirmDelete(context, ref, meal),
-                                onLogAgain: () => context.push('/add', extra: {
-                                  'repeatMeal': meal,
-                                  'returnPath': '/today',
-                                }),
-                              )),
+                          ),
                           const SizedBox(height: 8),
                         ],
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
+                        if (dayWeight != null)
+                          _HistoryWeightCard(
+                            entry: dayWeight,
+                            unit: settings.weightUnit,
+                            onDelete: () =>
+                                _confirmDeleteWeight(context, ref, dayWeight),
+                          ),
+                        ...sortedMeals.map((meal) => MealCard(
+                              meal: meal,
+                              onEdit: () => context.push('/add', extra: {
+                                'editingMeal': meal,
+                                'returnPath': '/history',
+                              }),
+                              onDelete: () =>
+                                  _confirmDelete(context, ref, meal),
+                              onLogAgain: () => context.push('/add', extra: {
+                                'repeatMeal': meal,
+                                'returnPath': '/today',
+                              }),
+                            )),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ],
+    ));
   }
 
   List<String> _datesFor(
@@ -473,7 +457,7 @@ class _HistoryWeightCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.appColors;
-    final value = unit == 'lbs' ? entry.weight * 2.20462262 : entry.weight;
+    final value = unit == 'lbs' ? entry.weight * kgToLbs : entry.weight;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

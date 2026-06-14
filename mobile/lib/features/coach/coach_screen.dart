@@ -2,12 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/models/app_settings.dart';
 import '../../core/models/meal.dart';
-import '../../core/models/weight_entry.dart';
 import '../../core/providers.dart';
 import '../../core/services/ai/meal_analysis.dart';
 import '../../core/theme/app_theme.dart';
@@ -27,12 +27,12 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
+    final userValues = ref.watch(userValuesProvider);
     final meals = ref.watch(mealsProvider);
-    final weights = ref.watch(weightsProvider);
     final todayMeals = ref.watch(todayMealsProvider);
     final c = context.appColors;
     final totals = _totals(todayMeals);
-    final targets = _targets(settings);
+    final targets = userValues.targets.toRequiredMap();
 
     final remaining = {
       'calories': (targets['calories'] ?? 0) - (totals['calories'] ?? 0),
@@ -41,123 +41,115 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
       'fat': (targets['fat'] ?? 0) - (totals['fat'] ?? 0),
     };
 
-    return Scaffold(
-      backgroundColor: c.bg,
-      body: Column(
-        children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Coach',
-                          style: TextStyle(
-                            color: c.text,
-                            fontFamily: 'Playfair Display',
-                            fontSize: 24,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _timeLabel(DateTime.now()).toUpperCase(),
-                          style: TextStyle(
-                            color: c.muted,
-                            fontSize: 10,
-                            letterSpacing: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => context.push('/settings'),
-                    icon: Icon(Icons.settings, color: c.muted),
-                  ),
-                ],
+    return SizedBox.expand(
+        child: Column(
+      children: [
+        GlassAppBar(
+          centerTitle: false,
+          preferredSize: const Size.fromHeight(60),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Coach',
+                style: TextStyle(
+                  color: c.text,
+                  fontFamily: 'Playfair Display',
+                  fontSize: 24,
+                ),
               ),
-            ),
+              Text(
+                _timeLabel(DateTime.now()).toUpperCase(),
+                style: TextStyle(
+                  color: c.muted,
+                  fontSize: 10,
+                  letterSpacing: 1.4,
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 100),
-              children: [
-                _DailyFitCard(totals: totals, targets: targets),
-                const SizedBox(height: 12),
-                _ContextCard(
-                  mealCount: meals.length,
-                  latestWeight: _latestWeight(weights),
-                  settings: settings,
+          actions: [
+            IconButton(
+              onPressed: () => context.push('/settings'),
+              icon: Icon(Icons.settings, color: c.muted),
+            ),
+          ],
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 100),
+            children: [
+              _DailyFitCard(totals: totals, targets: targets),
+              const SizedBox(height: 12),
+              _ContextCard(
+                mealCount: meals.length,
+                displayWeight: userValues.weightLabel,
+                goalLabel: userValues.goalLabel,
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _loading
+                    ? null
+                    : () => _getCoachPlan(settings, meals, userValues),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                  backgroundColor: c.accent,
+                  foregroundColor: AppColors.darkBg,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                _FamiliarMealsRow(
-                  meals: meals,
-                  remaining: remaining,
-                  onLog: _logHistoryMeal,
+                child: Text(
+                  _loading ? 'Thinking...' : 'Suggest my next meal',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                ElevatedButton(
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                _ErrorCard(message: _error!),
+              ],
+              if (_plan != null) ...[
+                const SizedBox(height: 14),
+                _PlanCard(
+                  plan: _plan!,
+                  onLog: _logSuggestion,
+                  afterIntro: _FamiliarMealsRow(
+                    meals: meals,
+                    remaining: remaining,
+                    onLog: _logHistoryMeal,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                OutlinedButton(
                   onPressed: _loading
                       ? null
-                      : () => _getCoachPlan(settings, meals, weights),
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(52),
-                    backgroundColor: c.accent,
-                    foregroundColor: AppColors.darkBg,
+                      : () => _getCoachPlan(
+                            settings,
+                            meals,
+                            userValues,
+                            append: true,
+                          ),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    foregroundColor: c.accent,
+                    side: BorderSide(color: c.border),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  child: Text(
-                    _loading ? 'Thinking...' : 'Suggest my next meal',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
+                  child: Text(_loading ? 'Thinking...' : 'Suggest more'),
                 ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  _ErrorCard(message: _error!),
-                ],
-                if (_plan != null) ...[
-                  const SizedBox(height: 14),
-                  _PlanCard(
-                    plan: _plan!,
-                    onLog: _logSuggestion,
-                  ),
-                  const SizedBox(height: 2),
-                  OutlinedButton(
-                    onPressed: _loading
-                        ? null
-                        : () => _getCoachPlan(
-                              settings,
-                              meals,
-                              weights,
-                              append: true,
-                            ),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                      foregroundColor: c.accent,
-                      side: BorderSide(color: c.border),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(_loading ? 'Thinking...' : 'Suggest more'),
-                  ),
-                ],
               ],
-            ),
+            ],
           ),
-        ],
-      ),
-    );
+        ),
+      ],
+    ));
   }
 
   Future<void> _getCoachPlan(
-      AppSettings settings, List<Meal> meals, List<WeightEntry> weights,
+      AppSettings settings, List<Meal> meals, UserValues userValues,
       {bool append = false}) async {
     setState(() {
       _loading = true;
@@ -170,7 +162,7 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
             context: _coachContext(
               settings,
               meals,
-              weights,
+              userValues,
               existingSuggestions: append ? _plan?.suggestions : null,
             ),
           );
@@ -196,15 +188,14 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
   }
 
   Map<String, dynamic> _coachContext(
-      AppSettings settings, List<Meal> meals, List<WeightEntry> weights,
+      AppSettings settings, List<Meal> meals, UserValues userValues,
       {List<CoachSuggestion>? existingSuggestions}) {
     final now = DateTime.now();
     final today = _todayStr(now);
     final todayMeals = meals.where((m) => m.date == today).toList();
     final recentMeals = [...meals]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    final latestWeight = _latestWeight(weights);
-    final targets = _targets(settings);
+    final targets = userValues.targets.toRequiredMap();
     final consumed = _totals(todayMeals);
 
     return {
@@ -222,27 +213,7 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
         'carbs': targets['carbs']! - consumed['carbs']!,
         'fat': targets['fat']! - consumed['fat']!,
       },
-      'user': {
-        'weightUnit': settings.weightUnit,
-        'latestWeight': latestWeight == null
-            ? null
-            : {
-                'kg': latestWeight.weight,
-                'display': settings.weightUnit == 'lbs'
-                    ? latestWeight.weight * 2.20462262
-                    : latestWeight.weight,
-                'unit': settings.weightUnit,
-                'date': latestWeight.date,
-              },
-        'goalWeightKg': settings.goalWeight,
-        'macroProfile': settings.macroProfile?.toJson(),
-        'macroRecommendation': settings.macroRecommendation?.toJson(),
-        'country': null,
-        'fitness': {
-          'available': false,
-          'exercises': <String>[],
-        },
-      },
+      'user': userValues.toCoachUserJson(),
       'recentMeals': recentMeals.take(10).map(_mealContext).toList(),
       if (existingSuggestions != null && existingSuggestions.isNotEmpty)
         'alreadySuggestedMeals': existingSuggestions
@@ -347,26 +318,12 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     return [];
   }
 
-  Map<String, double> _targets(AppSettings settings) => {
-        'calories': settings.goalCalories ?? 1800,
-        'protein': settings.goalProtein ?? 150,
-        'carbs': settings.goalCarbs ?? 180,
-        'fat': settings.goalFat ?? 60,
-      };
-
   Map<String, double> _totals(List<Meal> meals) => {
         'calories': meals.fold<double>(0, (s, m) => s + m.calories),
         'protein': meals.fold<double>(0, (s, m) => s + m.protein),
         'carbs': meals.fold<double>(0, (s, m) => s + m.carbs),
         'fat': meals.fold<double>(0, (s, m) => s + m.fat),
       };
-
-  WeightEntry? _latestWeight(List<WeightEntry> weights) {
-    if (weights.isEmpty) return null;
-    final sorted = [...weights]
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return sorted.first;
-  }
 
   String _todayStr(DateTime now) =>
       '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
@@ -476,23 +433,18 @@ class _MiniMacro extends StatelessWidget {
 
 class _ContextCard extends StatelessWidget {
   final int mealCount;
-  final WeightEntry? latestWeight;
-  final AppSettings settings;
+  final String displayWeight;
+  final String goalLabel;
 
   const _ContextCard({
     required this.mealCount,
-    required this.latestWeight,
-    required this.settings,
+    required this.displayWeight,
+    required this.goalLabel,
   });
 
   @override
   Widget build(BuildContext context) {
     final c = context.appColors;
-    final displayWeight = latestWeight == null
-        ? 'No weight yet'
-        : settings.weightUnit == 'lbs'
-            ? '${(latestWeight!.weight * 2.20462262).toStringAsFixed(1)} lbs'
-            : '${latestWeight!.weight.toStringAsFixed(1)} kg';
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: _cardDecoration(c),
@@ -502,7 +454,7 @@ class _ContextCard extends StatelessWidget {
         children: [
           _Chip('Meals', '$mealCount logged'),
           _Chip('Weight', displayWeight),
-          _Chip('Goal', settings.macroProfile?.goal ?? 'targets'),
+          _Chip('Goal', goalLabel),
           const _Chip('Fitness', 'not connected'),
         ],
       ),
@@ -537,8 +489,9 @@ class _Chip extends StatelessWidget {
 class _PlanCard extends StatelessWidget {
   final CoachPlan plan;
   final ValueChanged<CoachSuggestion> onLog;
+  final Widget? afterIntro;
 
-  const _PlanCard({required this.plan, required this.onLog});
+  const _PlanCard({required this.plan, required this.onLog, this.afterIntro});
 
   @override
   Widget build(BuildContext context) {
@@ -564,6 +517,10 @@ class _PlanCard extends StatelessWidget {
               ],
             ),
           ),
+        if (afterIntro != null) ...[
+          const SizedBox(height: 12),
+          afterIntro!,
+        ],
         const SizedBox(height: 12),
         ...plan.suggestions.map(
           (suggestion) => _SuggestionCard(
@@ -756,7 +713,8 @@ class _FamiliarMealsRow extends StatelessWidget {
 
     final freq = <String, int>{};
     final latest = <String, Meal>{};
-    final sorted = [...meals]..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final sorted = [...meals]
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     for (final meal in sorted) {
       final key = meal.mealName.toLowerCase().trim();

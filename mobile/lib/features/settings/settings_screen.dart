@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
@@ -66,9 +67,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _macroGender = profile?.gender ?? '';
     _macroActivity = profile?.activityLevel ?? 'moderate';
     _macroGoal = profile?.goal ?? 'maintain';
-    _macroWeightCtrl =
-        TextEditingController(text: profile?.weight?.toStringAsFixed(1) ?? '');
+    _macroWeightCtrl = TextEditingController(text: _macroWeightText(s));
     _macroAgeCtrl = TextEditingController(text: profile?.age?.toString() ?? '');
+  }
+
+  String _macroWeightText(AppSettings settings) {
+    final profile = settings.macroProfile;
+    final weight = profile?.weight;
+    if (weight == null) return '';
+    final unit = profile?.weightUnit ?? settings.weightUnit;
+    final kg = unit == 'lbs' ? weight * lbsToKg : weight;
+    final display = settings.weightUnit == 'lbs' ? kg * kgToLbs : kg;
+    return display.toStringAsFixed(1);
   }
 
   String _targetText(double? value) => value?.toStringAsFixed(0) ?? '';
@@ -87,6 +97,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _carbCtrl.text = _targetText(settings.goalCarbs);
     _fatCtrl.text = _targetText(settings.goalFat);
     _fibCtrl.text = _targetText(settings.goalFiber);
+  }
+
+  void _syncMacroWeightFromUserValues(UserValues userValues) {
+    if (_macroWeightCtrl.text.trim().isNotEmpty ||
+        userValues.macroProfile?.weight != null ||
+        userValues.currentWeight == null ||
+        userValues.currentWeight!.source != 'weightLog') {
+      return;
+    }
+
+    _macroWeightCtrl.text =
+        userValues.currentWeight!.display.toStringAsFixed(1);
   }
 
   @override
@@ -141,174 +163,166 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
 
     final settings = ref.watch(settingsProvider);
+    final userValues = ref.watch(userValuesProvider);
     final c = context.appColors;
+    _syncMacroWeightFromUserValues(userValues);
 
-    return Scaffold(
+    return GlassScaffold(
       backgroundColor: c.bg,
-      body: Column(
+      statusBarStyle: GlassStatusBarStyle.auto,
+      extendBody: false,
+      appBar: GlassAppBar(
+        title: const Text('Settings'),
+        leading: IconButton(
+          icon: Icon(Icons.close, color: c.muted),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/today');
+            }
+          },
+          style: IconButton.styleFrom(
+            minimumSize: const Size(44, 44),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _save,
+            child: Text(
+              'Save',
+              style: TextStyle(
+                color: c.accent,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
         children: [
-          PwaTopBar(
-            title: 'Settings',
-            showBorder: true,
-            leading: IconButton(
-              icon: Icon(Icons.close, color: c.muted),
-              onPressed: () {
-                if (context.canPop()) {
-                  context.pop();
-                } else {
-                  context.go('/today');
-                }
-              },
-              style: IconButton.styleFrom(
-                minimumSize: const Size(44, 44),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-            trailing: TextButton(
-              onPressed: _save,
-              child: Text(
-                'Save',
-                style: TextStyle(
-                  color: c.accent,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
+          // ── AI Provider ────────────────────────────────────────────
+          const _SectionHeader('AI Provider'),
+          _SegmentedRow(
+            options: const ['server', 'anthropic', 'openai'],
+            labels: const ['Server', 'Anthropic', 'OpenAI'],
+            selected: settings.provider,
+            onSelect: (v) => ref
+                .read(settingsProvider.notifier)
+                .update(settings.copyWith(provider: v)),
+            colors: [c.oai, c.plum, c.oai],
           ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                // ── AI Provider ────────────────────────────────────────────
-                const _SectionHeader('AI Provider'),
-                _SegmentedRow(
-                  options: const ['server', 'anthropic', 'openai'],
-                  labels: const ['Server', 'Anthropic', 'OpenAI'],
-                  selected: settings.provider,
-                  onSelect: (v) => ref
-                      .read(settingsProvider.notifier)
-                      .update(settings.copyWith(provider: v)),
-                  colors: [c.oai, c.plum, c.oai],
-                ),
-                const SizedBox(height: 12),
+          const SizedBox(height: 12),
 
-                if (settings.provider == 'server') ...[
-                  _Field(
-                      ctrl: _tokenCtrl,
-                      label: 'Server token (optional)',
-                      obscure: true),
-                  const SizedBox(height: 8),
-                  _Field(
-                      ctrl: _serverUrlCtrl,
-                      label: 'Server URL (leave blank for default)'),
-                ],
-                if (settings.provider == 'anthropic')
-                  _Field(
-                      ctrl: _anthropicCtrl,
-                      label: 'Anthropic API key',
-                      obscure: true),
-                if (settings.provider == 'openai')
-                  _Field(
-                      ctrl: _openaiCtrl,
-                      label: 'OpenAI API key',
-                      obscure: true),
+          if (settings.provider == 'server') ...[
+            _Field(
+                ctrl: _tokenCtrl,
+                label: 'Server token (optional)',
+                obscure: true),
+            const SizedBox(height: 8),
+            _Field(
+                ctrl: _serverUrlCtrl,
+                label: 'Server URL (leave blank for default)'),
+          ],
+          if (settings.provider == 'anthropic')
+            _Field(
+                ctrl: _anthropicCtrl,
+                label: 'Anthropic API key',
+                obscure: true),
+          if (settings.provider == 'openai')
+            _Field(ctrl: _openaiCtrl, label: 'OpenAI API key', obscure: true),
 
-                const SizedBox(height: 24),
+          const SizedBox(height: 24),
 
-                // ── Appearance ─────────────────────────────────────────────
-                const _SectionHeader('Theme'),
-                _SegmentedRow(
-                  options: const ['auto', 'light', 'dark'],
-                  labels: const ['Auto', 'Light', 'Dark'],
-                  selected: settings.theme,
-                  onSelect: (v) => ref
-                      .read(settingsProvider.notifier)
-                      .update(settings.copyWith(theme: v)),
-                  colors: [c.muted, c.accent, c.accent],
-                ),
-
-                const SizedBox(height: 24),
-
-                // ── Weight unit ────────────────────────────────────────────
-                const _SectionHeader('Weight Unit'),
-                _SegmentedRow(
-                  options: const ['kg', 'lbs'],
-                  labels: const ['kg', 'lbs'],
-                  selected: settings.weightUnit,
-                  onSelect: (v) => ref
-                      .read(settingsProvider.notifier)
-                      .update(settings.copyWith(weightUnit: v)),
-                  colors: [c.mint, c.mint],
-                ),
-
-                const SizedBox(height: 24),
-
-                // ── Daily targets ──────────────────────────────────────────
-                _MacroHelperPanel(
-                  open: _macroHelpOpen,
-                  loading: _macroLoading,
-                  error: _macroError,
-                  gender: _macroGender,
-                  activity: _macroActivity,
-                  goal: _macroGoal,
-                  weightUnit: settings.weightUnit,
-                  weightCtrl: _macroWeightCtrl,
-                  ageCtrl: _macroAgeCtrl,
-                  recommendation: settings.macroRecommendation,
-                  onToggle: () =>
-                      setState(() => _macroHelpOpen = !_macroHelpOpen),
-                  onGender: (v) => setState(() => _macroGender = v),
-                  onActivity: (v) => setState(() => _macroActivity = v),
-                  onGoal: (v) => setState(() => _macroGoal = v),
-                  onChoose: () => _chooseTargets(context),
-                ),
-                const SizedBox(height: 12),
-                _Field(ctrl: _calCtrl, label: 'Calories (kcal)', numeric: true),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                      child: _Field(
-                          ctrl: _protCtrl,
-                          label: 'Protein (g)',
-                          numeric: true)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: _Field(
-                          ctrl: _carbCtrl, label: 'Carbs (g)', numeric: true)),
-                ]),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                      child: _Field(
-                          ctrl: _fatCtrl, label: 'Fat (g)', numeric: true)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: _Field(
-                          ctrl: _fibCtrl, label: 'Fiber (g)', numeric: true)),
-                ]),
-
-                const SizedBox(height: 24),
-
-                // ── Data ───────────────────────────────────────────────────
-                const _SectionHeader('Data'),
-                _ActionTile(
-                  icon: Icons.upload_outlined,
-                  label: 'Export backup',
-                  color: c.accent,
-                  onTap: () => _export(context),
-                ),
-                const SizedBox(height: 8),
-                _ActionTile(
-                  icon: Icons.download_outlined,
-                  label: 'Import backup',
-                  color: c.sky,
-                  onTap: () => _import(context, ref),
-                ),
-
-                const SizedBox(height: 40),
-              ],
-            ),
+          // ── Appearance ─────────────────────────────────────────────
+          const _SectionHeader('Theme'),
+          _SegmentedRow(
+            options: const ['auto', 'light', 'dark'],
+            labels: const ['Auto', 'Light', 'Dark'],
+            selected: settings.theme,
+            onSelect: (v) => ref
+                .read(settingsProvider.notifier)
+                .update(settings.copyWith(theme: v)),
+            colors: [c.muted, c.accent, c.accent],
           ),
+
+          const SizedBox(height: 24),
+
+          // ── Weight unit ────────────────────────────────────────────
+          const _SectionHeader('Weight Unit'),
+          _SegmentedRow(
+            options: const ['kg', 'lbs'],
+            labels: const ['kg', 'lbs'],
+            selected: settings.weightUnit,
+            onSelect: (v) => ref
+                .read(settingsProvider.notifier)
+                .update(settings.copyWith(weightUnit: v)),
+            colors: [c.mint, c.mint],
+          ),
+
+          const SizedBox(height: 24),
+
+          // ── Daily targets ──────────────────────────────────────────
+          _MacroHelperPanel(
+            open: _macroHelpOpen,
+            loading: _macroLoading,
+            error: _macroError,
+            gender: _macroGender,
+            activity: _macroActivity,
+            goal: _macroGoal,
+            weightUnit: settings.weightUnit,
+            weightCtrl: _macroWeightCtrl,
+            ageCtrl: _macroAgeCtrl,
+            recommendation: userValues.recommendationForDisplay,
+            onToggle: () => setState(() => _macroHelpOpen = !_macroHelpOpen),
+            onGender: (v) => setState(() => _macroGender = v),
+            onActivity: (v) => setState(() => _macroActivity = v),
+            onGoal: (v) => setState(() => _macroGoal = v),
+            onChoose: () => _chooseTargets(context),
+          ),
+          const SizedBox(height: 12),
+          _Field(ctrl: _calCtrl, label: 'Calories (kcal)', numeric: true),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+                child: _Field(
+                    ctrl: _protCtrl, label: 'Protein (g)', numeric: true)),
+            const SizedBox(width: 8),
+            Expanded(
+                child:
+                    _Field(ctrl: _carbCtrl, label: 'Carbs (g)', numeric: true)),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+                child: _Field(ctrl: _fatCtrl, label: 'Fat (g)', numeric: true)),
+            const SizedBox(width: 8),
+            Expanded(
+                child:
+                    _Field(ctrl: _fibCtrl, label: 'Fiber (g)', numeric: true)),
+          ]),
+
+          const SizedBox(height: 24),
+
+          // ── Data ───────────────────────────────────────────────────
+          const _SectionHeader('Data'),
+          _ActionTile(
+            icon: Icons.upload_outlined,
+            label: 'Export backup',
+            color: c.accent,
+            onTap: () => _export(context),
+          ),
+          const SizedBox(height: 8),
+          _ActionTile(
+            icon: Icons.download_outlined,
+            label: 'Import backup',
+            color: c.sky,
+            onTap: () => _import(context, ref),
+          ),
+
+          const SizedBox(height: 40),
         ],
       ),
     );
@@ -379,9 +393,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return;
     }
 
+    final current = ref.read(settingsProvider);
     final profile = MacroProfile(
       gender: _macroGender,
       weight: weight,
+      weightUnit: current.weightUnit,
       age: age,
       activityLevel: _macroActivity,
       goal: _macroGoal,
@@ -394,7 +410,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
 
     try {
-      final current = ref.read(settingsProvider);
       final result = await ref
           .read(aiServiceProvider)
           .chooseTargets(settings: current, profile: profile);

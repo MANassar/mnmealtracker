@@ -119,6 +119,7 @@ class AppSettings {
 class MacroProfile {
   final String gender;
   final double? weight;
+  final String? weightUnit;
   final int? age;
   final String activityLevel;
   final String goal;
@@ -127,6 +128,7 @@ class MacroProfile {
   const MacroProfile({
     this.gender = '',
     this.weight,
+    this.weightUnit,
     this.age,
     this.activityLevel = 'moderate',
     this.goal = 'maintain',
@@ -136,6 +138,7 @@ class MacroProfile {
   Map<String, dynamic> toJson() => {
         'gender': gender,
         if (weight != null) 'weight': weight,
+        if (weightUnit != null) 'weightUnit': weightUnit,
         if (age != null) 'age': age,
         'activityLevel': activityLevel,
         'goal': goal,
@@ -145,6 +148,7 @@ class MacroProfile {
   factory MacroProfile.fromJson(Map<String, dynamic> json) => MacroProfile(
         gender: json['gender'] as String? ?? '',
         weight: (json['weight'] as num?)?.toDouble(),
+        weightUnit: json['weightUnit'] as String?,
         age: (json['age'] as num?)?.toInt(),
         activityLevel: json['activityLevel'] as String? ?? 'moderate',
         goal: json['goal'] as String? ?? 'maintain',
