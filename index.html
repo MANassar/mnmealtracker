@@ -441,6 +441,7 @@ const asPositiveNumber = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
+const parseAiJson = raw => JSON.parse(String(raw || '').replace(/```json|```/gi, '').trim());
 const normalizeTargets = settings => ({
   calories: asPositiveNumber(settings?.targets?.calories, DEFAULT_TARGETS.calories),
   protein:  asPositiveNumber(settings?.targets?.protein,  DEFAULT_TARGETS.protein),
@@ -488,6 +489,15 @@ Use evidence-based formulas. Prefer Mifflin-St Jeor for BMR and adjust by activi
 Return ONLY a raw JSON object — no markdown:
 {"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
 Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.`;
+
+const COACH_PROMPT = context =>
+`You are a practical nutrition coach. Use all available user context to suggest meals that fit this exact moment of the day.
+Context: ${JSON.stringify(context)}
+Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.
+Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals unless the user seems to repeat them often. Keep suggestions culturally flexible and easy to prepare or order.
+Return ONLY a raw JSON object — no markdown, no explanation:
+{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
+Provide 3 suggestions. Calories in kcal. Macros in grams. Keep each suggestion within the remaining day when possible; if remaining calories are very low, suggest a small high-protein option and say why.`;
 
 async function callAnthropic(img, desc, key) {
   // Anthropic manual mode uses the user's own key directly from the browser.
@@ -545,6 +555,25 @@ async function callAnthropicTargets(profile, key) {
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514', max_tokens: 900,
       messages: [{ role: 'user', content: [{ type: 'text', text: TARGETS_PROMPT(profile) }] }],
+    }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+  return (d.content || []).map(b => b.text || '').join('');
+}
+
+async function callAnthropicCoach(context, key) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514', max_tokens: 1200,
+      messages: [{ role: 'user', content: [{ type: 'text', text: COACH_PROMPT(context) }] }],
     }),
   });
   const d = await res.json();
@@ -629,6 +658,31 @@ async function callOpenAITargets(profile, key) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
     body: JSON.stringify({ mode: 'targets', profile }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d.text || '';
+}
+
+async function callOpenAICoach(context, key) {
+  if (key) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'gpt-4o', max_tokens: 1200,
+        messages: [{ role: 'user', content: [{ type: 'text', text: COACH_PROMPT(context) }] }],
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+    return d.choices?.[0]?.message?.content || '';
+  }
+
+  const res = await fetch('/.netlify/functions/analyze-meal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
+    body: JSON.stringify({ mode: 'coach', context }),
   });
   const d = await res.json();
   if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
@@ -1494,6 +1548,188 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
 }
 
 /* ── Today View ─────────────────────────────────────────── */
+const timeOfDayLabel = date => {
+  const hour = date.getHours();
+  const part = hour < 11 ? 'morning' : hour < 15 ? 'midday' : hour < 18 ? 'afternoon' : 'evening';
+  return `${part} · ${String(hour).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+const buildCoachContext = ({ settings, meals, weights, targets }) => {
+  const now = new Date();
+  const today = meals.filter(m => m.date === todayStr());
+  const consumed = {
+    calories: sum(today, 'calories'),
+    protein: sum(today, 'protein'),
+    carbs: sum(today, 'carbs'),
+    fat: sum(today, 'fat'),
+  };
+  const latestWeight = [...weights].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || null;
+  const recentMeals = [...meals]
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 18)
+    .map(meal => ({
+      date: meal.date,
+      timestamp: meal.timestamp,
+      mealName: meal.mealName,
+      calories: meal.calories,
+      protein: meal.protein,
+      carbs: meal.carbs,
+      fat: meal.fat,
+      fiber: meal.fiber || 0,
+      description: meal.description || '',
+      ingredients: meal.ingredients || [],
+    }));
+  return {
+    generatedAt: now.toISOString(),
+    localTime: { hour: now.getHours(), weekday: now.getDay() || 7, label: timeOfDayLabel(now) },
+    targets,
+    consumedToday: consumed,
+    remainingToday: {
+      calories: targets.calories - consumed.calories,
+      protein: targets.protein - consumed.protein,
+      carbs: targets.carbs - consumed.carbs,
+      fat: targets.fat - consumed.fat,
+    },
+    user: {
+      weightUnit: settings.weightUnit || 'kg',
+      latestWeight,
+      goalWeight: settings.goalWeight ?? null,
+      macroProfile: settings.macroProfile || null,
+      macroRecommendation: settings.macroRecommendation || null,
+      country: null,
+      fitness: { available: false, exercises: [] },
+    },
+    recentMeals,
+  };
+};
+
+function CoachView({ meals, weights = [], settings, targets, onSettings }) {
+  const [status, setStatus] = useState('idle');
+  const [plan, setPlan] = useState(null);
+  const [err, setErr] = useState('');
+  const activeProvider =
+    settings.provider === 'anthropic' && settings.anthropicKey?.trim() ? 'anthropic' :
+    settings.provider === 'openai' && settings.oaiKey?.trim() ? 'openai' :
+    'server';
+  const key = activeProvider === 'anthropic' ? settings.anthropicKey?.trim() : activeProvider === 'openai' ? settings.oaiKey?.trim() : '';
+  const today = meals.filter(m => m.date === todayStr());
+  const consumed = {
+    calories: sum(today, 'calories'),
+    protein: sum(today, 'protein'),
+    carbs: sum(today, 'carbs'),
+    fat: sum(today, 'fat'),
+  };
+  const remaining = targets.calories - consumed.calories;
+  const latestWeight = [...weights].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || null;
+  const weightLabel = latestWeight ? `${Number(latestWeight.weight || 0).toFixed(1)} ${latestWeight.unit || settings.weightUnit || 'kg'}` : 'No weight yet';
+  const macroPct = key => Math.min(100, Math.max(0, (consumed[key] / targets[key]) * 100 || 0));
+  const getSuggestions = async () => {
+    const context = buildCoachContext({ settings, meals, weights, targets });
+    setStatus('loading'); setErr('');
+    trackEvent('coach_started', { provider: activeProvider, meal_count_bucket: valueBucket(meals.length, 10) });
+    try {
+      const raw = activeProvider === 'anthropic'
+        ? await callAnthropicCoach(context, key)
+        : await callOpenAICoach(context, key);
+      const parsed = parseAiJson(raw);
+      setPlan(parsed);
+      setStatus('ready');
+      trackEvent('coach_succeeded', { provider: activeProvider, suggestion_count: (parsed.suggestions || []).length });
+    } catch (error) {
+      setErr(`Coach failed: ${error.message || error}`);
+      setStatus('idle');
+      trackEvent('coach_failed', { provider: activeProvider });
+    }
+  };
+  const MacroPill = ({ label, field, color }) => html`
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;justify-content:space-between;gap:5px;margin-bottom:5px">
+        <span style="font-size:10px;color:${color};font-family:'DM Mono',monospace">${label}</span>
+        <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">${Math.round(consumed[field])}/${Math.round(targets[field])}g</span>
+      </div>
+      <div style="height:4px;background:var(--surface);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${macroPct(field)}%;background:${color};border-radius:3px"/>
+      </div>
+    </div>`;
+  const Suggestion = ({ item }) => html`
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="font-family:'Playfair Display',serif;font-size:18px;color:var(--text);line-height:1.2">${item.mealName || 'Suggested meal'}</div>
+          ${item.timing ? html`<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-top:5px">${item.timing}</div>` : null}
+        </div>
+        <div style="font-size:16px;color:var(--accent);font-family:'DM Mono',monospace;font-weight:800;white-space:nowrap">${Math.round(item.calories || 0)} kcal</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:12px 0 10px">
+        ${[
+          ['P', item.protein, 'var(--mint)'],
+          ['C', item.carbs, 'var(--sky)'],
+          ['F', item.fat, 'var(--peach)'],
+          ['Fi', item.fiber || 0, 'var(--plum)'],
+        ].map(([label, value, color]) => html`
+          <div style="background:var(--surface);border-radius:8px;padding:7px 4px;text-align:center">
+            <div style="font-size:13px;font-weight:700;color:${color};font-family:'DM Mono',monospace">${Math.round(value || 0)}</div>
+            <div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">${label}</div>
+          </div>`)}
+      </div>
+      ${item.why ? html`<div style="font-size:13px;color:var(--text);line-height:1.35;margin-bottom:9px">${item.why}</div>` : null}
+      ${(item.ingredients || []).slice(0, 5).map(i => html`<div style="font-size:12px;color:var(--muted);line-height:1.35">· ${i}</div>`)}
+      ${(item.steps || []).length ? html`<div style="font-size:12px;color:var(--muted);font-style:italic;line-height:1.35;margin-top:9px">${(item.steps || []).slice(0, 2).join(' ')}</div>` : null}
+    </div>`;
+  return html`
+    <div style="display:flex;flex-direction:column;height:100%;min-height:0">
+      <div style="padding:calc(var(--sat) + 14px) 16px 10px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-family:'Playfair Display',serif;font-size:24px;color:var(--text)">Coach</div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.14em;margin-top:4px">${timeOfDayLabel(new Date())}</div>
+          </div>
+          <button onClick=${onSettings}
+            style="background:transparent;border:none;color:var(--muted);border-radius:10px;width:38px;height:38px;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center">⚙</button>
+        </div>
+      </div>
+      <div class="scroll" style="flex:1;padding:0 16px 16px">
+        <div style="min-height:calc(100% + 1px)">
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:12px">
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Today so far</div>
+            <div style="font-size:22px;color:${remaining >= 0 ? 'var(--mint)' : 'var(--danger)'};font-family:'DM Mono',monospace;font-weight:800;margin-bottom:14px">
+              ${remaining >= 0 ? `${Math.round(remaining)} kcal remaining` : `${Math.abs(Math.round(remaining))} kcal over target`}
+            </div>
+            <div style="display:flex;gap:8px">
+              <${MacroPill} label="P" field="protein" color="var(--mint)"/>
+              <${MacroPill} label="C" field="carbs" color="var(--sky)"/>
+              <${MacroPill} label="F" field="fat" color="var(--peach)"/>
+            </div>
+          </div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px">
+            ${[
+              ['Meals', `${meals.length} logged`],
+              ['Weight', weightLabel],
+              ['Goal', settings.macroProfile?.goal || 'targets'],
+              ['Fitness', 'not connected'],
+            ].map(([label, value]) => html`
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 10px;font-size:11px;color:var(--muted)">
+                ${label} · ${value}
+              </div>`)}
+          </div>
+          <button onClick=${getSuggestions} disabled=${status === 'loading'}
+            style="width:100%;background:${status === 'loading' ? 'var(--muted)' : providerColor(activeProvider)};border:none;color:#0c1a10;border-radius:14px;padding:16px;font-size:15px;font-weight:800;cursor:${status === 'loading' ? 'wait' : 'pointer'};min-height:54px;margin-bottom:12px">
+            ${status === 'loading' ? 'Thinking…' : 'Suggest my next meal'}
+          </button>
+          ${err ? html`<div style="background:rgba(212,106,90,.12);border:1px solid var(--danger);border-radius:10px;padding:12px;color:var(--danger);font-size:13px;margin-bottom:12px;line-height:1.4">${err}</div>` : null}
+          ${plan ? html`
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px">
+              ${plan.summary ? html`<div style="font-size:13px;color:var(--text);line-height:1.4">${plan.summary}</div>` : null}
+              ${plan.focus ? html`<div style="font-size:13px;color:var(--accent);line-height:1.4;margin-top:8px">${plan.focus}</div>` : null}
+            </div>
+            ${(plan.suggestions || []).map(item => html`<${Suggestion} item=${item}/>`)}
+            ${plan.caution ? html`<div style="font-size:11px;color:var(--muted);line-height:1.4;margin:4px 0 18px">${plan.caution}</div>` : null}
+          ` : null}
+        </div>
+      </div>
+    </div>`;
+}
+
 function TodayView({ meals, targets, onDelete, onEdit, onSettings }) {
   // Today is derived from the full meal list each render, keeping storage simple.
   const today   = meals.filter(m => m.date === todayStr());
@@ -2435,6 +2671,7 @@ function App() {
     { key: 'today',   icon: '◉', label: 'Home'    },
     { key: 'history', icon: '≡', label: 'History'  },
     { key: 'weight',  icon: '⚖', label: 'Weight'  },
+    { key: 'coach',   icon: '✦', label: 'Coach'   },
   ];
 
   const navAccent = providerColor(settings.provider);
@@ -2453,6 +2690,7 @@ function App() {
           view === 'settings' ? html`<${SettView} settings=${settings} meals=${meals} weights=${weights} onSave=${s => { updateSettings(s); setView('today'); }} onApply=${updateSettings} onBack=${() => setView('today')} onExport=${exportMeals} onImport=${importMeals} onFeedback=${openFeedback}/>` :
           view === 'history'  ? html`<${HistView} meals=${meals} weights=${weights} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onLogAgain=${logMealAgain} onDeleteWeight=${deleteWeight} onExport=${exportMeals} onImport=${importMeals} onClear=${clearMeals}/>` :
           view === 'weight'   ? html`<${WeightView} weights=${weights} settings=${settings} onAddWeight=${addWeight} onDeleteWeight=${deleteWeight} onSetGoal=${setGoalWeight} onSettings=${() => setView('settings')}/>` :
+          view === 'coach'    ? html`<${CoachView} meals=${meals} weights=${weights} settings=${settings} targets=${targets} onSettings=${() => setView('settings')}/>` :
                                 html`<${TodayView} meals=${meals} targets=${targets} onDelete=${deleteMeal} onEdit=${editMeal} onSettings=${() => setView('settings')}/>`}
       </div>
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/coach/coach_screen.dart';
 import '../features/history/history_screen.dart';
 import '../features/meals/add_meal_screen.dart';
 import '../features/meals/today_screen.dart';
@@ -30,6 +31,11 @@ final appRouter = GoRouter(
           path: '/weight',
           pageBuilder: (context, state) =>
               const NoTransitionPage(child: WeightScreen()),
+        ),
+        GoRoute(
+          path: '/coach',
+          pageBuilder: (context, state) =>
+              const NoTransitionPage(child: CoachScreen()),
         ),
       ],
     ),
@@ -86,6 +92,7 @@ class AppShell extends StatelessWidget {
   int _indexForLocation(String location) {
     if (location.startsWith('/history')) return 1;
     if (location.startsWith('/weight')) return 2;
+    if (location.startsWith('/coach')) return 3;
     return 0;
   }
 
@@ -99,6 +106,9 @@ class AppShell extends StatelessWidget {
         break;
       case 2:
         context.go('/weight');
+        break;
+      case 3:
+        context.go('/coach');
         break;
     }
   }
@@ -117,6 +127,7 @@ class _PwaTabBar extends StatelessWidget {
     ('◉', 'Home'),
     ('≡', 'History'),
     ('⚖', 'Weight'),
+    ('✦', 'Coach'),
   ];
 
   @override

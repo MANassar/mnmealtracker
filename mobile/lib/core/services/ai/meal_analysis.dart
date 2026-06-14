@@ -28,10 +28,9 @@ class MealAnalysis {
         carbs: (json['carbs'] as num?)?.toDouble() ?? 0,
         fat: (json['fat'] as num?)?.toDouble() ?? 0,
         fiber: (json['fiber'] as num?)?.toDouble() ?? 0,
-        ingredients: (json['ingredients'] as List?)
-                ?.map((e) => e.toString())
-                .toList() ??
-            [],
+        ingredients:
+            (json['ingredients'] as List?)?.map((e) => e.toString()).toList() ??
+                [],
         confidence: json['confidence'] as String?,
         portionNote: json['portionNote'] as String?,
       );
@@ -115,5 +114,74 @@ class OptimizationSuggestion {
         carbsDelta: (json['carbsDelta'] as num?)?.toDouble(),
         fatDelta: (json['fatDelta'] as num?)?.toDouble(),
         fiberDelta: (json['fiberDelta'] as num?)?.toDouble(),
+      );
+}
+
+class CoachSuggestion {
+  final String mealName;
+  final String timing;
+  final String why;
+  final double calories;
+  final double protein;
+  final double carbs;
+  final double fat;
+  final double fiber;
+  final List<String> ingredients;
+  final List<String> steps;
+
+  const CoachSuggestion({
+    required this.mealName,
+    required this.timing,
+    required this.why,
+    required this.calories,
+    required this.protein,
+    required this.carbs,
+    required this.fat,
+    required this.fiber,
+    this.ingredients = const [],
+    this.steps = const [],
+  });
+
+  factory CoachSuggestion.fromJson(Map<String, dynamic> json) =>
+      CoachSuggestion(
+        mealName: json['mealName'] as String? ?? 'Suggested meal',
+        timing: json['timing'] as String? ?? '',
+        why: json['why'] as String? ?? '',
+        calories: (json['calories'] as num?)?.toDouble() ?? 0,
+        protein: (json['protein'] as num?)?.toDouble() ?? 0,
+        carbs: (json['carbs'] as num?)?.toDouble() ?? 0,
+        fat: (json['fat'] as num?)?.toDouble() ?? 0,
+        fiber: (json['fiber'] as num?)?.toDouble() ?? 0,
+        ingredients:
+            (json['ingredients'] as List?)?.map((e) => e.toString()).toList() ??
+                [],
+        steps:
+            (json['steps'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      );
+}
+
+class CoachPlan {
+  final String summary;
+  final String focus;
+  final String caution;
+  final List<CoachSuggestion> suggestions;
+
+  const CoachPlan({
+    required this.summary,
+    required this.focus,
+    required this.caution,
+    this.suggestions = const [],
+  });
+
+  factory CoachPlan.fromJson(Map<String, dynamic> json) => CoachPlan(
+        summary: json['summary'] as String? ?? '',
+        focus: json['focus'] as String? ?? '',
+        caution: json['caution'] as String? ?? '',
+        suggestions: (json['suggestions'] as List?)
+                ?.whereType<Map>()
+                .map((e) =>
+                    CoachSuggestion.fromJson(Map<String, dynamic>.from(e)))
+                .toList() ??
+            [],
       );
 }

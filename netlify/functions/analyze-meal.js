@@ -64,6 +64,15 @@ Return ONLY a raw JSON object — no markdown:
 {"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
 Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.`;
 
+const coachPrompt = context =>
+`You are a practical nutrition coach. Use all available user context to suggest meals that fit this exact moment of the day.
+Context: ${JSON.stringify(context)}
+Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.
+Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals unless the user seems to repeat them often. Keep suggestions culturally flexible and easy to prepare or order.
+Return ONLY a raw JSON object — no markdown, no explanation:
+{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}
+Provide 3 suggestions. Calories in kcal. Macros in grams. Keep each suggestion within the remaining day when possible; if remaining calories are very low, suggest a small high-protein option and say why.`;
+
 exports.handler = async event => {
   // Browsers send OPTIONS before custom cross-origin POST requests.
   if (event.httpMethod === 'OPTIONS') return json(event, 204, {});
@@ -99,18 +108,21 @@ exports.handler = async event => {
     return json(event, 400, { error: 'Invalid JSON body.' });
   }
 
-  const mode = payload.mode === 'optimize' ? 'optimize' : payload.mode === 'targets' ? 'targets' : 'analyze';
+  const mode = payload.mode === 'optimize' ? 'optimize' : payload.mode === 'targets' ? 'targets' : payload.mode === 'coach' ? 'coach' : 'analyze';
   const img = payload.img || null;
   const desc = String(payload.desc || '').trim();
   const analysis = payload.analysis && typeof payload.analysis === 'object' ? payload.analysis : null;
   const profile = payload.profile && typeof payload.profile === 'object' ? payload.profile : null;
+  const coachContext = payload.context && typeof payload.context === 'object' ? payload.context : null;
   // Cheap validation happens before any paid OpenAI call.
   if (mode === 'analyze' && !img && !desc) return json(event, 400, { error: 'Please provide an image, a description, or both.' });
   if (mode === 'optimize' && !analysis) return json(event, 400, { error: 'Please provide an analysis to optimize.' });
   if (mode === 'targets' && !profile) return json(event, 400, { error: 'Please provide a profile.' });
+  if (mode === 'coach' && !coachContext) return json(event, 400, { error: 'Please provide coach context.' });
   if (desc.length > 2000) return json(event, 413, { error: 'Description is too long.' });
   if (analysis && JSON.stringify(analysis).length > 5000) return json(event, 413, { error: 'Analysis is too large.' });
   if (profile && JSON.stringify(profile).length > 3000) return json(event, 413, { error: 'Profile is too large.' });
+  if (coachContext && JSON.stringify(coachContext).length > 12000) return json(event, 413, { error: 'Coach context is too large.' });
   if (img?.b64 && img.b64.length > 7_000_000) return json(event, 413, { error: 'Image is too large.' });
   if (img?.type && !['image/jpeg', 'image/png', 'image/webp'].includes(img.type)) {
     return json(event, 415, { error: 'Unsupported image type.' });
@@ -121,7 +133,7 @@ exports.handler = async event => {
     ...(mode === 'analyze' && img?.b64 && img?.type
       ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }]
       : []),
-    { type: 'text', text: mode === 'targets' ? targetPrompt(profile) : mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
+    { type: 'text', text: mode === 'targets' ? targetPrompt(profile) : mode === 'coach' ? coachPrompt(coachContext) : mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
   ];
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {

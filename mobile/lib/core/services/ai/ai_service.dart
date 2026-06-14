@@ -37,6 +37,15 @@ String _targetsPrompt(MacroProfile profile) =>
     '{"calories":2100,"protein":150,"carbs":230,"fat":70,"method":"brief formula and activity-factor summary","explanation":"2-4 short sentences explaining why these targets fit the profile","cautions":"brief safety note that this is AI-generated general guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
     'Calories in kcal. Macros in grams. Round calories to the nearest 25 and macros to whole grams.';
 
+String _coachPrompt(Map<String, dynamic> context) =>
+    'You are a practical nutrition coach. Use all available user context to suggest meals that fit this exact moment of the day.\n'
+    'Context: ${jsonEncode(context)}\n'
+    'Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.\n'
+    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. Avoid repeating very recent meals unless the user seems to repeat them often. Keep suggestions culturally flexible and easy to prepare or order.\n'
+    'Return ONLY a raw JSON object — no markdown, no explanation:\n'
+    '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
+    'Provide 3 suggestions. Calories in kcal. Macros in grams. Keep each suggestion within the remaining day when possible; if remaining calories are very low, suggest a small high-protein option and say why.';
+
 class AiService {
   final Dio _dio =
       Dio(BaseOptions(connectTimeout: 30000, receiveTimeout: 60000));
@@ -128,6 +137,25 @@ class AiService {
     }
   }
 
+  Future<CoachPlan> coach({
+    required AppSettings settings,
+    required Map<String, dynamic> context,
+  }) async {
+    final rawText = await _callProvider(
+      settings: settings,
+      mode: 'coach',
+      coachContext: context,
+    );
+
+    try {
+      return CoachPlan.fromJson(_parseJson(rawText));
+    } on FormatException {
+      throw const AiServiceException(
+        'The AI response was not valid coach data. Try again in a moment.',
+      );
+    }
+  }
+
   Future<String> _callProvider({
     required AppSettings settings,
     required String mode,
@@ -136,6 +164,7 @@ class AiService {
     String description = '',
     Map<String, dynamic>? analysis,
     MacroProfile? profile,
+    Map<String, dynamic>? coachContext,
   }) async {
     try {
       switch (settings.provider) {
@@ -148,6 +177,7 @@ class AiService {
             description: description,
             analysis: analysis,
             profile: profile,
+            coachContext: coachContext,
           );
         case 'anthropic':
           return _callAnthropic(
@@ -158,6 +188,7 @@ class AiService {
             description: description,
             analysis: analysis,
             profile: profile,
+            coachContext: coachContext,
           );
         case 'openai':
           return _callOpenAi(
@@ -168,6 +199,7 @@ class AiService {
             description: description,
             analysis: analysis,
             profile: profile,
+            coachContext: coachContext,
           );
         default:
           throw AiServiceException('Unknown provider: ${settings.provider}');
@@ -191,6 +223,7 @@ class AiService {
     String description = '',
     Map<String, dynamic>? analysis,
     MacroProfile? profile,
+    Map<String, dynamic>? coachContext,
   }) async {
     final url = (settings.serverUrl?.isNotEmpty == true
             ? settings.serverUrl!
@@ -210,6 +243,7 @@ class AiService {
     }
     if (analysis != null) body['analysis'] = analysis;
     if (profile != null) body['profile'] = profile.toJson();
+    if (coachContext != null) body['context'] = coachContext;
 
     final response = await _dio.post<Map<String, dynamic>>(
       url,
@@ -232,16 +266,19 @@ class AiService {
     String description = '',
     Map<String, dynamic>? analysis,
     MacroProfile? profile,
+    Map<String, dynamic>? coachContext,
   }) async {
     if (apiKey.isEmpty) throw Exception('Anthropic API key is not set.');
 
     final prompt = mode == 'targets'
         ? _targetsPrompt(profile!)
-        : mode == 'optimize'
-            ? _optimizePrompt(analysis!, description)
-            : (description.isNotEmpty
-                ? _analyzePromptWithDesc(description)
-                : _analyzePrompt);
+        : mode == 'coach'
+            ? _coachPrompt(coachContext!)
+            : mode == 'optimize'
+                ? _optimizePrompt(analysis!, description)
+                : (description.isNotEmpty
+                    ? _analyzePromptWithDesc(description)
+                    : _analyzePrompt);
 
     final contentList = <Map<String, dynamic>>[];
     if (b64 != null && mimeType != null && mode == 'analyze') {
@@ -292,16 +329,19 @@ class AiService {
     String description = '',
     Map<String, dynamic>? analysis,
     MacroProfile? profile,
+    Map<String, dynamic>? coachContext,
   }) async {
     if (apiKey.isEmpty) throw Exception('OpenAI API key is not set.');
 
     final prompt = mode == 'targets'
         ? _targetsPrompt(profile!)
-        : mode == 'optimize'
-            ? _optimizePrompt(analysis!, description)
-            : (description.isNotEmpty
-                ? _analyzePromptWithDesc(description)
-                : _analyzePrompt);
+        : mode == 'coach'
+            ? _coachPrompt(coachContext!)
+            : mode == 'optimize'
+                ? _optimizePrompt(analysis!, description)
+                : (description.isNotEmpty
+                    ? _analyzePromptWithDesc(description)
+                    : _analyzePrompt);
 
     final contentList = <Map<String, dynamic>>[];
     if (b64 != null && mimeType != null && mode == 'analyze') {
