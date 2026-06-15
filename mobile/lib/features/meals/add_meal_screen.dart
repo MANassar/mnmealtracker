@@ -78,6 +78,8 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
         carbs: source.carbs,
         fat: source.fat,
         fiber: source.fiber,
+        ingredients: _ingredientsFromJson(source.ingredients),
+        confidence: source.confidence,
         portionNote: source.portionNote,
       );
       _status = _Status.review;
@@ -273,12 +275,15 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
     });
   }
 
-  List<String> _ingredientsFromJson(String? raw) {
+  List<MealIngredient> _ingredientsFromJson(String? raw) {
     if (raw == null || raw.trim().isEmpty) return const [];
     try {
       final parsed = jsonDecode(raw);
       if (parsed is! List) return const [];
-      return parsed.map((item) => item.toString()).toList();
+      return parsed
+          .map(MealIngredient.fromJson)
+          .where((item) => item.name.isNotEmpty)
+          .toList();
     } catch (_) {
       return const [];
     }
@@ -386,7 +391,9 @@ class _AddMealScreenState extends ConsumerState<AddMealScreen> {
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
         ),
-        actions: [_ProviderPill(provider: ref.watch(settingsProvider).provider)],
+        actions: [
+          _ProviderPill(provider: ref.watch(settingsProvider).provider)
+        ],
       ),
       body: Column(
         children: [
@@ -672,9 +679,83 @@ class _AnalysisEditor extends StatelessWidget {
               ),
             ),
           ],
+          if (analysis.ingredients.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _IngredientBreakdown(ingredients: analysis.ingredients),
+          ],
         ],
       ),
     );
+  }
+}
+
+class _IngredientBreakdown extends StatelessWidget {
+  final List<MealIngredient> ingredients;
+
+  const _IngredientBreakdown({required this.ingredients});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.appColors;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'INGREDIENT BREAKDOWN',
+            style: TextStyle(
+              color: c.muted,
+              fontSize: 9,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...ingredients.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.label,
+                    style: TextStyle(
+                      color: c.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _nutritionText(item),
+                    style: TextStyle(
+                      color: c.muted,
+                      fontSize: 10,
+                      fontFamily: 'DM Mono',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _nutritionText(MealIngredient item) {
+    if (!item.hasNutrition) return 'Nutrition not itemized';
+    final parts = <String>[];
+    if (item.calories != null) parts.add('${item.calories!.round()} kcal');
+    if (item.protein != null) parts.add('${item.protein!.toStringAsFixed(0)}P');
+    if (item.carbs != null) parts.add('${item.carbs!.toStringAsFixed(0)}C');
+    if (item.fat != null) parts.add('${item.fat!.toStringAsFixed(0)}F');
+    if (item.fiber != null) parts.add('${item.fiber!.toStringAsFixed(0)}Fi');
+    return parts.join('  ·  ');
   }
 }
 

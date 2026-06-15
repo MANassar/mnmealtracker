@@ -16,14 +16,30 @@ const _defaultServerToken = 'f60c9972646d37fe29b95d95806f103c551799183c90d388';
 const _analyzePrompt =
     '''You are a clinical nutritionist. Analyze the food from the image, description, or both.
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["visible component with estimated quantity","second visible component with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
-Calories in kcal. Macros in grams. Do not underestimate portions.''';
+{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":[{"name":"grilled chicken breast","quantity":"150g","calories":248,"protein":46.0,"carbs":0.0,"fat":5.4,"fiber":0.0},{"name":"cooked rice","quantity":"1 cup","calories":205,"protein":4.3,"carbs":44.5,"fat":0.4,"fiber":0.6}],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
+Calories in kcal. Macros in grams. Treat user-provided quantities, weights, volumes, counts, and brand/restaurant details as source-of-truth. If the text says "200g rice" or "2 eggs", use those exact amounts even if the image looks different. Only infer typical portions for ingredients without explicit amounts, and say exactly which items were inferred. Do not write generic phrases like "estimated based on typical servings" when any exact quantities were provided.
+Strict ingredient contract:
+- ingredients MUST be an array of objects, never strings.
+- INVALID: {"ingredients":["34g Vollkorn Brot","24g basil sauce"]}
+- VALID: {"ingredients":[{"name":"Vollkorn Brot","quantity":"34g","calories":85,"protein":3.0,"carbs":14.0,"fat":1.5,"fiber":2.0}]}
+- Every ingredient object MUST include name, quantity, calories, protein, carbs, fat, and fiber.
+- calories, protein, carbs, fat, and fiber MUST be JSON numbers, not strings, null, or omitted. If exact data is unavailable, estimate a numeric value from the stated quantity.
+- Put ingredient macro math directly on each ingredient object; do not put it only in a separate nutritionBreakdown field.
+Ingredient totals should approximately equal the meal totals.''';
 
 String _analyzePromptWithDesc(String desc) =>
     'You are a clinical nutritionist. Analyze the food from the image, description, or both. User context: "$desc"\n'
     'Return ONLY a raw JSON object — no markdown, no explanation:\n'
-    '{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["visible component with estimated quantity","second visible component with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}\n'
-    'Calories in kcal. Macros in grams. Do not underestimate portions.';
+    '{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":[{"name":"grilled chicken breast","quantity":"150g","calories":248,"protein":46.0,"carbs":0.0,"fat":5.4,"fiber":0.0},{"name":"cooked rice","quantity":"1 cup","calories":205,"protein":4.3,"carbs":44.5,"fat":0.4,"fiber":0.6}],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}\n'
+    'Calories in kcal. Macros in grams. Treat user-provided quantities, weights, volumes, counts, and brand/restaurant details as source-of-truth. If the text says "200g rice" or "2 eggs", use those exact amounts even if the image looks different. Only infer typical portions for ingredients without explicit amounts, and say exactly which items were inferred. Do not write generic phrases like "estimated based on typical servings" when any exact quantities were provided.\n'
+    'Strict ingredient contract:\n'
+    '- ingredients MUST be an array of objects, never strings.\n'
+    '- INVALID: {"ingredients":["34g Vollkorn Brot","24g basil sauce"]}\n'
+    '- VALID: {"ingredients":[{"name":"Vollkorn Brot","quantity":"34g","calories":85,"protein":3.0,"carbs":14.0,"fat":1.5,"fiber":2.0}]}\n'
+    '- Every ingredient object MUST include name, quantity, calories, protein, carbs, fat, and fiber.\n'
+    '- calories, protein, carbs, fat, and fiber MUST be JSON numbers, not strings, null, or omitted. If exact data is unavailable, estimate a numeric value from the stated quantity.\n'
+    '- Put ingredient macro math directly on each ingredient object; do not put it only in a separate nutritionBreakdown field.\n'
+    'Ingredient totals should approximately equal the meal totals.';
 
 String _optimizePrompt(Map<String, dynamic> analysis, String desc) =>
     'You are a clinical nutritionist. Create a lower-calorie version of this meal while keeping it recognizable and satisfying.\n'
@@ -32,6 +48,12 @@ String _optimizePrompt(Map<String, dynamic> analysis, String desc) =>
     'Return ONLY a raw JSON object — no markdown, no explanation:\n'
     '{"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0}],"calorieSavings":100}\n'
     'Calories in kcal. Macros in grams. Keep protein high. Each suggestion must name the original item, the replacement, and specific quantities.';
+
+String _repairPrompt(Map<String, dynamic> analysis, String desc) =>
+    'You are a clinical nutritionist. The previous meal JSON has ingredient names/amounts but missing per-ingredient nutrition.\n'
+    'Original user context: "${desc.isEmpty ? 'No extra context provided.' : desc}"\n'
+    'Previous JSON: ${jsonEncode(analysis)}\n'
+    'Return ONLY the same raw JSON object, but replace ingredients with an array of objects. Every ingredient object must have name, quantity, calories, protein, carbs, fat, and fiber. Use the listed gram amounts/quantities as source-of-truth. The ingredient totals must approximately equal the meal totals. Do not return string ingredients. Do not add markdown.';
 
 String _targetsPrompt(MacroProfile profile) =>
     'You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:\n'
@@ -81,7 +103,17 @@ class AiService {
     );
 
     try {
-      return MealAnalysis.fromJson(_parseJson(rawText));
+      final parsed = _parseJson(rawText);
+      final analysis = MealAnalysis.fromJson(parsed);
+      if (analysis.needsIngredientNutrition) {
+        return _repairIngredientNutrition(
+          settings: settings,
+          analysisJson: parsed,
+          fallback: analysis,
+          description: description,
+        );
+      }
+      return analysis;
     } on FormatException {
       if (b64 == null && description.trim().isNotEmpty) {
         final retryText = await _callProvider(
@@ -91,7 +123,17 @@ class AiService {
               'TEXT ONLY. There is no image attached. Analyze this food description and return only the requested raw JSON object: ${description.trim()}',
         );
         try {
-          return MealAnalysis.fromJson(_parseJson(retryText));
+          final parsed = _parseJson(retryText);
+          final analysis = MealAnalysis.fromJson(parsed);
+          if (analysis.needsIngredientNutrition) {
+            return _repairIngredientNutrition(
+              settings: settings,
+              analysisJson: parsed,
+              fallback: analysis,
+              description: description,
+            );
+          }
+          return analysis;
         } on FormatException {
           // Fall through to the user-facing message below.
         }
@@ -99,6 +141,26 @@ class AiService {
       throw const AiServiceException(
         'The AI response was not valid nutrition data. Try again, or add a more specific meal description.',
       );
+    }
+  }
+
+  Future<MealAnalysis> _repairIngredientNutrition({
+    required AppSettings settings,
+    required Map<String, dynamic> analysisJson,
+    required MealAnalysis fallback,
+    required String description,
+  }) async {
+    try {
+      final rawText = await _callProvider(
+        settings: settings,
+        mode: 'repair',
+        analysis: analysisJson,
+        description: description,
+      );
+      final repaired = MealAnalysis.fromJson(_parseJson(rawText));
+      return repaired.needsIngredientNutrition ? fallback : repaired;
+    } catch (_) {
+      return fallback;
     }
   }
 
@@ -331,11 +393,13 @@ class AiService {
         ? _targetsPrompt(profile!)
         : mode == 'coach'
             ? _coachPrompt(coachContext!)
-            : mode == 'optimize'
-                ? _optimizePrompt(analysis!, description)
-                : (description.isNotEmpty
-                    ? _analyzePromptWithDesc(description)
-                    : _analyzePrompt);
+            : mode == 'repair'
+                ? _repairPrompt(analysis!, description)
+                : mode == 'optimize'
+                    ? _optimizePrompt(analysis!, description)
+                    : (description.isNotEmpty
+                        ? _analyzePromptWithDesc(description)
+                        : _analyzePrompt);
 
     final contentList = <Map<String, dynamic>>[];
     if (b64 != null && mimeType != null && mode == 'analyze') {
@@ -354,7 +418,7 @@ class AiService {
       'https://api.anthropic.com/v1/messages',
       data: {
         'model': 'claude-opus-4-7',
-        'max_tokens': 1000,
+        'max_tokens': 2000,
         'messages': [
           {'role': 'user', 'content': contentList}
         ],
@@ -394,11 +458,13 @@ class AiService {
         ? _targetsPrompt(profile!)
         : mode == 'coach'
             ? _coachPrompt(coachContext!)
-            : mode == 'optimize'
-                ? _optimizePrompt(analysis!, description)
-                : (description.isNotEmpty
-                    ? _analyzePromptWithDesc(description)
-                    : _analyzePrompt);
+            : mode == 'repair'
+                ? _repairPrompt(analysis!, description)
+                : mode == 'optimize'
+                    ? _optimizePrompt(analysis!, description)
+                    : (description.isNotEmpty
+                        ? _analyzePromptWithDesc(description)
+                        : _analyzePrompt);
 
     final contentList = <Map<String, dynamic>>[];
     if (b64 != null && mimeType != null && mode == 'analyze') {
@@ -412,8 +478,9 @@ class AiService {
     final response = await _dio.post<Map<String, dynamic>>(
       'https://api.openai.com/v1/chat/completions',
       data: {
-        'model': 'gpt-4o',
-        'max_tokens': 1000,
+        'model': (mode == 'analyze' && b64 != null) ? 'gpt-4o' : 'gpt-4o-mini',
+        'max_tokens': 2000,
+        'response_format': {'type': 'json_object'},
         'messages': [
           {'role': 'user', 'content': contentList}
         ],

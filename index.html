@@ -269,6 +269,111 @@ const parseStoredJson = (key, fallback) => {
 };
 const mealKey = meal => String(meal?.id ?? `${meal?.date || ''}-${meal?.timestamp || ''}-${meal?.mealName || ''}`);
 const mealListFrom = value => Array.isArray(value) ? value : Array.isArray(value?.meals) ? value.meals : [];
+const numberOrNull = value => {
+  if (typeof value === 'string') {
+    const match = value.match(/-?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    value = match[0];
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+const firstNumber = (sources, keys) => {
+  for (const source of sources.filter(Boolean)) {
+    for (const key of keys) {
+      const value = source?.[key];
+      const n = numberOrNull(value);
+      if (n !== null) return n;
+    }
+  }
+  return null;
+};
+const textNumber = (text, patterns) => {
+  for (const pattern of patterns) {
+    const match = String(text || '').match(pattern);
+    if (match) return numberOrNull(match[1]);
+  }
+  return null;
+};
+const ingredientFromText = text => {
+  const label = String(text || '').trim();
+  const beforeColon = label.split(/:|\s[-–—]\s/)[0]?.trim();
+  return {
+    name: beforeColon || label,
+    quantity: '',
+    calories: textNumber(label, [/(\d+(?:\.\d+)?)\s*(?:kcal|cal)/i]),
+    protein: textNumber(label, [/(\d+(?:\.\d+)?)\s*g?\s*(?:protein|p\b)/i, /(?:protein|p\b)\s*:?\s*(\d+(?:\.\d+)?)/i]),
+    carbs: textNumber(label, [/(\d+(?:\.\d+)?)\s*g?\s*(?:carbs?|carbohydrates?|c\b)/i, /(?:carbs?|carbohydrates?|c\b)\s*:?\s*(\d+(?:\.\d+)?)/i]),
+    fat: textNumber(label, [/(\d+(?:\.\d+)?)\s*g?\s*(?:fat|f\b)/i, /(?:fat|f\b)\s*:?\s*(\d+(?:\.\d+)?)/i]),
+    fiber: textNumber(label, [/(\d+(?:\.\d+)?)\s*g?\s*(?:fib(?:er|re)?|fi\b)/i, /(?:fib(?:er|re)?|fi\b)\s*:?\s*(\d+(?:\.\d+)?)/i]),
+  };
+};
+const normalizeIngredient = item => {
+  if (item && typeof item === 'object' && !Array.isArray(item)) {
+    const nested = item.nutrition || item.macros || item.nutritionBreakdown || null;
+    const parsedText = ingredientFromText(item.text || item.description || item.label || item.name || item.ingredient || item.item || '');
+    const sources = [item, nested];
+    const name = String(item.name || item.ingredient || item.item || parsedText.name || '').trim();
+    return {
+      name,
+      quantity: String(item.quantity || item.portion || item.amount || parsedText.quantity || '').trim(),
+      calories: firstNumber(sources, ['calories', 'caloriesKcal', 'calories_kcal', 'kcal', 'energy', 'energyKcal', 'energy_kcal']) ?? parsedText.calories,
+      protein: firstNumber(sources, ['protein', 'proteinG', 'protein_g', 'proteinGrams', 'protein_grams']) ?? parsedText.protein,
+      carbs: firstNumber(sources, ['carbs', 'carbohydrates', 'carbohydrate', 'carbsG', 'carbs_g', 'carbohydratesG', 'carbohydrates_g']) ?? parsedText.carbs,
+      fat: firstNumber(sources, ['fat', 'fats', 'fatG', 'fat_g', 'fatGrams', 'fat_grams']) ?? parsedText.fat,
+      fiber: firstNumber(sources, ['fiber', 'fibre', 'fiberG', 'fiber_g', 'fibreG', 'fibre_g']) ?? parsedText.fiber,
+    };
+  }
+  return ingredientFromText(item);
+};
+const normalizeIngredients = ingredients =>
+  (Array.isArray(ingredients) ? ingredients : [])
+    .map(normalizeIngredient)
+    .filter(item => item.name);
+const analysisIngredients = analysis => {
+  const ingredients = normalizeIngredients(analysis?.ingredients);
+  const breakdown = normalizeIngredients(
+    analysis?.nutritionBreakdown ||
+    analysis?.ingredientBreakdown ||
+    analysis?.macroBreakdown ||
+    analysis?.ingredientNutrition
+  );
+  if (!ingredients.length) return breakdown;
+  if (ingredients.some(item => item.calories !== null || item.protein !== null || item.carbs !== null || item.fat !== null || item.fiber !== null)) return ingredients;
+  if (breakdown.some(item => item.calories !== null || item.protein !== null || item.carbs !== null || item.fat !== null || item.fiber !== null)) return breakdown;
+  return ingredients;
+};
+const ingredientLabel = item => {
+  const i = normalizeIngredient(item);
+  return [i.quantity, i.name].filter(Boolean).join(' ');
+};
+const ingredientNutrition = item => {
+  const i = normalizeIngredient(item);
+  const parts = [
+    i.calories !== null ? `${Math.round(i.calories)} kcal` : '',
+    i.protein !== null ? `${Math.round(i.protein)}P` : '',
+    i.carbs !== null ? `${Math.round(i.carbs)}C` : '',
+    i.fat !== null ? `${Math.round(i.fat)}F` : '',
+    i.fiber !== null ? `${Math.round(i.fiber)}Fi` : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : 'Nutrition not itemized';
+};
+const cleanPortionNote = value => String(value || '').trim().replace(
+  /estimated based on typical servings?/ig,
+  'estimated from provided details where available; unspecified amounts were inferred'
+);
+const normalizeMealAnalysis = analysis => ({
+  ...analysis,
+  ingredients: analysisIngredients(analysis),
+  portionNote: cleanPortionNote(analysis?.portionNote),
+});
+const ingredientHasNutrition = item => {
+  const i = normalizeIngredient(item);
+  return i.calories !== null || i.protein !== null || i.carbs !== null || i.fat !== null || i.fiber !== null;
+};
+const needsIngredientNutrition = analysis =>
+  normalizeIngredients(analysis?.ingredients).length > 0 &&
+  normalizeIngredients(analysis?.ingredients).some(item => !ingredientHasNutrition(item));
 const deletedMealKeys = () => new Set(parseStoredJson(DELETED_MEALS_KEY, []));
 const rememberDeletedMeal = meal => {
   // Tombstones prevent recovery snapshots from bringing back intentional deletes.
@@ -464,7 +569,7 @@ const normalizeCoachPlanCopy = plan => ({
     mealName: coachCopy(item?.mealName),
     timing: coachCopy(item?.timing),
     why: coachCopy(item?.why),
-    ingredients: (item?.ingredients || []).map(coachCopy),
+    ingredients: normalizeIngredients(item?.ingredients).map(ingredientLabel),
     nutritionBreakdown: (item?.nutritionBreakdown || []).map(coachCopy),
     steps: (item?.steps || []).map(coachCopy),
   })),
@@ -498,8 +603,16 @@ applyTheme(loadSettings().theme);
 const PROMPT = desc =>
 `You are a clinical nutritionist. Analyze the food from the image, description, or both.${desc ? ` User context: "${desc}"` : ''}
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["visible component with estimated quantity","second visible component with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
-Calories in kcal. Macros in grams. Do not underestimate portions. If the user provided only an image and no description, spell out every detected meal component in ingredients, including sauces, sides, toppings, and drinks when visible.`;
+{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":[{"name":"grilled chicken breast","quantity":"150g","calories":248,"protein":46.0,"carbs":0.0,"fat":5.4,"fiber":0.0},{"name":"cooked rice","quantity":"1 cup","calories":205,"protein":4.3,"carbs":44.5,"fat":0.4,"fiber":0.6}],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
+Calories in kcal. Macros in grams. Treat user-provided quantities, weights, volumes, counts, and brand/restaurant details as source-of-truth. If the text says "200g rice" or "2 eggs", use those exact amounts even if the image looks different. Only infer typical portions for ingredients without explicit amounts, and say exactly which items were inferred. Do not write generic phrases like "estimated based on typical servings" when any exact quantities were provided.
+Strict ingredient contract:
+- ingredients MUST be an array of objects, never strings.
+- INVALID: {"ingredients":["34g Vollkorn Brot","24g basil sauce"]}
+- VALID: {"ingredients":[{"name":"Vollkorn Brot","quantity":"34g","calories":85,"protein":3.0,"carbs":14.0,"fat":1.5,"fiber":2.0}]}
+- Every ingredient object MUST include name, quantity, calories, protein, carbs, fat, and fiber.
+- calories, protein, carbs, fat, and fiber MUST be JSON numbers, not strings, null, or omitted. If exact data is unavailable, estimate a numeric value from the stated quantity.
+- Put ingredient macro math directly on each ingredient object; do not put it only in a separate nutritionBreakdown field.
+Ingredient totals should approximately equal the meal totals. If the user provided only an image and no description, spell out every detected meal component in ingredients, including sauces, sides, toppings, and drinks when visible.`;
 
 const OPTIMIZE_PROMPT = (analysis, desc) =>
 `You are a clinical nutritionist. Create a lower-calorie version of this meal while keeping it recognizable and satisfying.
@@ -508,6 +621,12 @@ Original analysis: ${JSON.stringify(analysis)}
 Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0},{"text":"use 120g grilled chicken breast instead of 120g fried chicken thigh","caloriesDelta":-80,"proteinDelta":6.0,"carbsDelta":0.0,"fatDelta":-9.0,"fiberDelta":0.0}],"calorieSavings":100}
 Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Each suggestion must be concrete: name the original item, the replacement or reduction, and the specific quantity. Each suggestion must include estimated calorie and macro deltas versus the original item. Do not suggest unsafe restriction.`;
+
+const REPAIR_PROMPT = (analysis, desc) =>
+`You are a clinical nutritionist. The previous meal JSON has ingredient names/amounts but missing per-ingredient nutrition.
+Original user context: "${desc || 'No extra context provided.'}"
+Previous JSON: ${JSON.stringify(analysis)}
+Return ONLY the same raw JSON object, but replace ingredients with an array of objects. Every ingredient object must have name, quantity, calories, protein, carbs, fat, and fiber. Use the listed gram amounts/quantities as source-of-truth. The ingredient totals must approximately equal the meal totals. Do not return string ingredients. Do not add markdown.`;
 
 const TARGETS_PROMPT = profile =>
 `You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:
@@ -572,6 +691,25 @@ async function callAnthropicOptimization(analysis, desc, key) {
   return (d.content || []).map(b => b.text || '').join('');
 }
 
+async function callAnthropicRepair(analysis, desc, key) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514', max_tokens: 1000,
+      messages: [{ role: 'user', content: [{ type: 'text', text: REPAIR_PROMPT(analysis, desc) }] }],
+    }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+  return (d.content || []).map(b => b.text || '').join('');
+}
+
 async function callAnthropicTargets(profile, key) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -622,6 +760,7 @@ async function callOpenAI(img, desc, key) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model: 'gpt-4o', max_tokens: 1000,
+        response_format: { type: 'json_object' },
         messages: [{ role: 'user', content }],
       }),
     });
@@ -649,6 +788,7 @@ async function callOpenAIOptimization(analysis, desc, key) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model: 'gpt-4o', max_tokens: 1000,
+        response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: [{ type: 'text', text: OPTIMIZE_PROMPT(analysis, desc) }] }],
       }),
     });
@@ -668,6 +808,32 @@ async function callOpenAIOptimization(analysis, desc, key) {
   return d.text || '';
 }
 
+async function callOpenAIRepair(analysis, desc, key) {
+  if (key) {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({
+        model: 'gpt-4o', max_tokens: 1000,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: [{ type: 'text', text: REPAIR_PROMPT(analysis, desc) }] }],
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error?.message || `HTTP ${res.status}`);
+    return d.choices?.[0]?.message?.content || '';
+  }
+
+  const res = await fetch('/.netlify/functions/analyze-meal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Meal-Tracker-Token': window.APP_CONFIG?.serverToken || '' },
+    body: JSON.stringify({ mode: 'repair', analysis, desc }),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+  return d.text || '';
+}
+
 async function callOpenAITargets(profile, key) {
   if (key) {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -675,6 +841,7 @@ async function callOpenAITargets(profile, key) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model: 'gpt-4o', max_tokens: 900,
+        response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: [{ type: 'text', text: TARGETS_PROMPT(profile) }] }],
       }),
     });
@@ -700,6 +867,7 @@ async function callOpenAICoach(context, key) {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model: 'gpt-4o', max_tokens: 1200,
+        response_format: { type: 'json_object' },
         messages: [{ role: 'user', content: [{ type: 'text', text: COACH_PROMPT(context) }] }],
       }),
     });
@@ -1004,6 +1172,7 @@ function MealCard({ meal, onDelete, onEdit, onLogAgain }) {
   // Cards stay compact by default and expand inline for details/actions.
   const [open, setOpen] = useState(false);
   const pc   = providerColor(meal.provider);
+  const ingredients = normalizeIngredients(meal.ingredients);
   const m3   = [['P', meal.protein, 'var(--mint)'], ['C', meal.carbs, 'var(--sky)'], ['F', meal.fat, 'var(--peach)']];
   const m4   = [['Protein', meal.protein, 'var(--mint)'], ['Carbs', meal.carbs, 'var(--sky)'], ['Fat', meal.fat, 'var(--peach)'], ['Fiber', meal.fiber || 0, 'var(--plum)']];
   return html`
@@ -1039,10 +1208,14 @@ function MealCard({ meal, onDelete, onEdit, onLogAgain }) {
                 <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-top:2px">${l}</div>
               </div>`)}
           </div>
-          ${meal.ingredients?.length > 0 ? html`
+          ${ingredients.length > 0 ? html`
             <div style="margin-bottom:8px">
-              <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:5px">Estimated ingredients</div>
-              ${meal.ingredients.map(i => html`<div style="font-size:12px;color:var(--text);margin-bottom:2px">· ${i}</div>`)}
+              <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:7px">Ingredient breakdown</div>
+              ${ingredients.map(i => html`
+                <div style="margin-bottom:7px">
+                  <div style="font-size:12px;color:var(--text);font-weight:600;line-height:1.25">${ingredientLabel(i)}</div>
+                  <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px">${ingredientNutrition(i)}</div>
+                </div>`)}
             </div>` : null}
           ${meal.portionNote ? html`
             <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(201,168,76,.06);border-radius:8px;border-left:2px solid ${pc}">
@@ -1086,7 +1259,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
     'server';
   const isEditing = Boolean(meal);
   const seedMeal = meal || repeatMeal;
-  const initialAnalysis = seedMeal ? {
+  const initialAnalysis = seedMeal ? normalizeMealAnalysis({
     mealName: seedMeal.mealName,
     calories: seedMeal.calories,
     protein: seedMeal.protein,
@@ -1096,7 +1269,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
     ingredients: seedMeal.ingredients || [],
     portionNote: seedMeal.portionNote || '',
     confidence: seedMeal.confidence || 'medium',
-  } : null;
+  }) : null;
   const [img,      setImg]      = useState(seedMeal?.imageData ? {
     url: `data:${seedMeal.imageType};base64,${seedMeal.imageData}`,
     b64: seedMeal.imageData,
@@ -1170,7 +1343,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
       b64: item.imageData,
       type: item.imageType,
     } : null);
-    setAnalysis({
+    setAnalysis(normalizeMealAnalysis({
       mealName: item.mealName,
       calories: item.calories,
       protein: item.protein,
@@ -1180,7 +1353,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
       ingredients: item.ingredients || [],
       portionNote: item.portionNote || '',
       confidence: item.confidence || 'medium',
-    });
+    }));
     setEditableNutrition(item);
     setAnalysisProvider(item.provider || activeProvider);
     setOptimization(null);
@@ -1190,7 +1363,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
     trackEvent('previous_meal_selected');
   };
 
-  const parseAiJson = raw => JSON.parse(raw.replace(/```json|```/gi, '').trim());
+  const parseAiJson = raw => normalizeMealAnalysis(JSON.parse(raw.replace(/```json|```/gi, '').trim()));
   const formatDelta = (value, unit = 'g') => {
     // Deltas are shown with signs so reductions and increases are easy to scan.
     const n = Number(value);
@@ -1290,7 +1463,16 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
       const raw = activeProvider === 'anthropic'
         ? await callAnthropic(img, trimmedDesc, key)
         : await callOpenAI(img, trimmedDesc, key);
-      const parsed = normalizeCoachPlanCopy(parseAiJson(raw));
+      let parsed = normalizeCoachPlanCopy(parseAiJson(raw));
+      if (needsIngredientNutrition(parsed)) {
+        try {
+          const repairRaw = activeProvider === 'anthropic'
+            ? await callAnthropicRepair(parsed, trimmedDesc, key)
+            : await callOpenAIRepair(parsed, trimmedDesc, key);
+          const repaired = normalizeCoachPlanCopy(parseAiJson(repairRaw));
+          if (!needsIngredientNutrition(repaired)) parsed = repaired;
+        } catch {}
+      }
       setAnalysis(parsed); setEditableNutrition(parsed); setAnalysisProvider(activeProvider); setStatus('review');
       trackEvent('meal_analysis_succeeded', {
         provider: activeProvider,
@@ -1374,7 +1556,7 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
       calories:    reviewedAnalysis.calories,
       protein:     reviewedAnalysis.protein,  carbs:  reviewedAnalysis.carbs,
       fat:         reviewedAnalysis.fat,      fiber:  reviewedAnalysis.fiber || 0,
-      ingredients: reviewedAnalysis.ingredients  || [],
+      ingredients: normalizeIngredients(reviewedAnalysis.ingredients),
       portionNote: reviewedAnalysis.portionNote  || '',
       confidence:  reviewedAnalysis.confidence   || 'medium',
     }, {
@@ -1474,6 +1656,15 @@ function AddView({ settings, meal, repeatMeal, meals = [], onSave, onCancel }) {
             ${analysis.portionNote ? html`
               <div style="font-size:11px;color:var(--muted);font-style:italic;padding:8px 10px;background:rgba(${activeProvider === 'anthropic' ? '201,168,76' : '116,170,156'},.06);border-radius:8px;border-left:2px solid ${pc}">
                 ${analysis.portionNote}
+              </div>` : null}
+            ${normalizeIngredients(analysis.ingredients).length ? html`
+              <div style="background:var(--surface);border-radius:10px;padding:10px;margin-top:12px">
+                <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Ingredient breakdown</div>
+                ${normalizeIngredients(analysis.ingredients).map(i => html`
+                  <div style="margin-bottom:8px">
+                    <div style="font-size:12px;color:var(--text);font-weight:600;line-height:1.25">${ingredientLabel(i)}</div>
+                    <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px">${ingredientNutrition(i)}</div>
+                  </div>`)}
               </div>` : null}
           </div>` : null}
 
@@ -1606,7 +1797,7 @@ const buildCoachContext = ({ settings, meals, weights, targets, existingSuggesti
       fat: meal.fat,
       fiber: meal.fiber || 0,
       description: String(meal.description || '').slice(0, 120),
-      ingredients: (meal.ingredients || []).slice(0, 5),
+      ingredients: normalizeIngredients(meal.ingredients).slice(0, 5).map(ingredientLabel),
     }));
   return {
     generatedAt: now.toISOString(),
@@ -1659,7 +1850,7 @@ const localCoachPlan = context => {
     carbs: Math.round(Number(recentMeal.carbs) || 40),
     fat: Math.round(Number(recentMeal.fat) || 15),
     fiber: Math.round(Number(recentMeal.fiber) || 5),
-    ingredients: (recentMeal.ingredients || []).length ? recentMeal.ingredients : [`A familiar portion of ${recentMeal.mealName}`],
+    ingredients: normalizeIngredients(recentMeal.ingredients).length ? normalizeIngredients(recentMeal.ingredients).map(ingredientLabel) : [`A familiar portion of ${recentMeal.mealName}`],
     nutritionBreakdown: [
       `${recentMeal.mealName} based on your recent log: ${Math.round(Number(recentMeal.calories) || 450)} kcal, ${Math.round(Number(recentMeal.protein) || 30)}g protein, ${Math.round(Number(recentMeal.carbs) || 40)}g carbs, ${Math.round(Number(recentMeal.fat) || 15)}g fat, ${Math.round(Number(recentMeal.fiber) || 5)}g fiber`,
     ],
@@ -1832,7 +2023,7 @@ const familiarCoachSuggestion = context => {
     carbs,
     fat,
     fiber,
-    ingredients: (recentMeal.ingredients || []).length ? recentMeal.ingredients : [`A familiar portion of ${recentMeal.mealName}`],
+    ingredients: normalizeIngredients(recentMeal.ingredients).length ? normalizeIngredients(recentMeal.ingredients).map(ingredientLabel) : [`A familiar portion of ${recentMeal.mealName}`],
     nutritionBreakdown: [
       `${recentMeal.mealName} based on your recent log: ${calories} kcal, ${protein}g protein, ${carbs}g carbs, ${fat}g fat, ${fiber}g fiber`,
     ],
@@ -1952,7 +2143,7 @@ function CoachView({ meals, weights = [], settings, targets, onSettings, onLogSu
           </div>`)}
       </div>
       ${item.why ? html`<div style="font-size:13px;color:var(--text);line-height:1.35;margin-bottom:9px">${item.why}</div>` : null}
-      ${(item.ingredients || []).slice(0, 5).map(i => html`<div style="font-size:12px;color:var(--muted);line-height:1.35">· ${i}</div>`)}
+      ${(item.ingredients || []).slice(0, 5).map(i => html`<div style="font-size:12px;color:var(--muted);line-height:1.35">· ${typeof i === 'string' ? i : ingredientLabel(i)}</div>`)}
       ${(item.nutritionBreakdown || []).length ? html`
         <div style="font-size:10px;color:var(--accent);text-transform:uppercase;letter-spacing:.1em;margin-top:10px;margin-bottom:5px">Macro math</div>
         ${(item.nutritionBreakdown || []).slice(0, 6).map(i => html`

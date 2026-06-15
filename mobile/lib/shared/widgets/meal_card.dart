@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../core/models/meal.dart';
+import '../../core/services/ai/meal_analysis.dart';
 import '../../core/theme/app_theme.dart';
 import 'pwa_chrome.dart';
 
@@ -162,7 +163,7 @@ class _MealCardState extends State<MealCard> {
                     if (ingredients.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
-                        'ESTIMATED INGREDIENTS',
+                        'INGREDIENT BREAKDOWN',
                         style: TextStyle(
                           color: c.muted,
                           fontSize: 9,
@@ -172,10 +173,28 @@ class _MealCardState extends State<MealCard> {
                       const SizedBox(height: 5),
                       ...ingredients.map(
                         (item) => Padding(
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: Text(
-                            '· $item',
-                            style: TextStyle(color: c.text, fontSize: 12),
+                          padding: const EdgeInsets.only(bottom: 7),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.label,
+                                style: TextStyle(
+                                  color: c.text,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _ingredientNutrition(item),
+                                style: TextStyle(
+                                  color: c.muted,
+                                  fontSize: 10,
+                                  fontFamily: 'DM Mono',
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -268,15 +287,29 @@ class _MealCardState extends State<MealCard> {
     );
   }
 
-  List<String> _ingredients(String? raw) {
+  List<MealIngredient> _ingredients(String? raw) {
     if (raw == null || raw.trim().isEmpty) return const [];
     try {
       final parsed = raw.startsWith('[') ? raw : '[]';
       final list = List<Object?>.from(jsonDecode(parsed) as List);
-      return list.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+      return list
+          .map(MealIngredient.fromJson)
+          .where((e) => e.name.isNotEmpty)
+          .toList();
     } catch (_) {
       return const [];
     }
+  }
+
+  String _ingredientNutrition(MealIngredient item) {
+    if (!item.hasNutrition) return 'Nutrition not itemized';
+    final parts = <String>[];
+    if (item.calories != null) parts.add('${item.calories!.round()} kcal');
+    if (item.protein != null) parts.add('${item.protein!.toStringAsFixed(0)}P');
+    if (item.carbs != null) parts.add('${item.carbs!.toStringAsFixed(0)}C');
+    if (item.fat != null) parts.add('${item.fat!.toStringAsFixed(0)}F');
+    if (item.fiber != null) parts.add('${item.fiber!.toStringAsFixed(0)}Fi');
+    return parts.join('  ·  ');
   }
 
   String _fmtTime(int ts) {

@@ -332,7 +332,13 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     if (raw == null || raw.trim().isEmpty) return [];
     try {
       final parsed = jsonDecode(raw);
-      if (parsed is List) return parsed.map((e) => e.toString()).toList();
+      if (parsed is List) {
+        return parsed
+            .map(MealIngredient.fromJson)
+            .where((e) => e.name.isNotEmpty)
+            .map((e) => e.label)
+            .toList();
+      }
     } catch (_) {}
     return [];
   }

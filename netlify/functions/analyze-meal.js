@@ -41,12 +41,33 @@ const json = (event, statusCode, body) => ({
   body: JSON.stringify(body),
 });
 
+// Returns true when any ingredient is a string or is an object missing numeric nutrition fields.
+const needsIngredientRepair = parsed => {
+  const ingredients = parsed?.ingredients;
+  if (!Array.isArray(ingredients) || ingredients.length === 0) return false;
+  return ingredients.some(
+    i =>
+      typeof i === 'string' ||
+      (typeof i === 'object' &&
+        i !== null &&
+        (i.calories == null || i.protein == null || i.carbs == null || i.fat == null || i.fiber == null)),
+  );
+};
+
 // Keep the model contract narrow: one raw JSON object that the client can parse.
 const prompt = desc =>
 `You are a clinical nutritionist. Analyze the food from the image, description, or both.${desc ? ` User context: "${desc}"` : ''}
 Return ONLY a raw JSON object — no markdown, no explanation:
-{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":["visible component with estimated quantity","second visible component with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
-Calories in kcal. Macros in grams. Do not underestimate portions. If the user provided only an image and no description, spell out every detected meal component in ingredients, including sauces, sides, toppings, and drinks when visible.`;
+{"mealName":"specific dish name","calories":450,"protein":32.5,"carbs":28.0,"fat":18.5,"fiber":4.2,"ingredients":[{"name":"grilled chicken breast","quantity":"150g","calories":248,"protein":46.0,"carbs":0.0,"fat":5.4,"fiber":0.0},{"name":"cooked rice","quantity":"1 cup","calories":205,"protein":4.3,"carbs":44.5,"fat":0.4,"fiber":0.6}],"confidence":"high|medium|low","portionNote":"brief estimation note listing the detected visible components and portion assumptions"}
+Calories in kcal. Macros in grams. Treat user-provided quantities, weights, volumes, counts, and brand/restaurant details as source-of-truth. If the text says "200g rice" or "2 eggs", use those exact amounts even if the image looks different. Only infer typical portions for ingredients without explicit amounts, and say exactly which items were inferred. Do not write generic phrases like "estimated based on typical servings" when any exact quantities were provided.
+Strict ingredient contract:
+- ingredients MUST be an array of objects, never strings.
+- INVALID: {"ingredients":["34g Vollkorn Brot","24g basil sauce"]}
+- VALID: {"ingredients":[{"name":"Vollkorn Brot","quantity":"34g","calories":85,"protein":3.0,"carbs":14.0,"fat":1.5,"fiber":2.0}]}
+- Every ingredient object MUST include name, quantity, calories, protein, carbs, fat, and fiber.
+- calories, protein, carbs, fat, and fiber MUST be JSON numbers, not strings, null, or omitted. If exact data is unavailable, estimate a numeric value from the stated quantity.
+- Put ingredient macro math directly on each ingredient object; do not put it only in a separate nutritionBreakdown field.
+Ingredient totals should approximately equal the meal totals. If the user provided only an image and no description, spell out every detected meal component in ingredients, including sauces, sides, toppings, and drinks when visible.`;
 
 const optimizePrompt = (analysis, desc) =>
 `You are a clinical nutritionist. Create a lower-calorie version of this meal while keeping it recognizable and satisfying.
@@ -55,6 +76,12 @@ Original analysis: ${JSON.stringify(analysis)}
 Return ONLY a raw JSON object — no markdown, no explanation:
 {"mealName":"optimized dish name","calories":350,"protein":30.0,"carbs":24.0,"fat":12.0,"fiber":5.0,"ingredients":["optimized item with estimated quantity"],"confidence":"high|medium|low","portionNote":"brief note explaining the calorie-focused changes","suggestions":[{"text":"replace 2 tbsp mayonnaise with 2 tbsp Greek yogurt","caloriesDelta":-120,"proteinDelta":5.0,"carbsDelta":1.0,"fatDelta":-12.0,"fiberDelta":0.0},{"text":"use 120g grilled chicken breast instead of 120g fried chicken thigh","caloriesDelta":-80,"proteinDelta":6.0,"carbsDelta":0.0,"fatDelta":-9.0,"fiberDelta":0.0}],"calorieSavings":100}
 Calories in kcal. Macros in grams. Keep protein as high as reasonably possible. Each suggestion must be concrete: name the original item, the replacement or reduction, and the specific quantity. Each suggestion must include estimated calorie and macro deltas versus the original item. Do not suggest unsafe restriction.`;
+
+const repairPrompt = (analysis, desc) =>
+`You are a clinical nutritionist. The previous meal JSON has ingredient names/amounts but missing per-ingredient nutrition.
+Original user context: "${desc || 'No extra context provided.'}"
+Previous JSON: ${JSON.stringify(analysis)}
+Return ONLY the same raw JSON object, but replace ingredients with an array of objects. Every ingredient object must have name, quantity, calories, protein, carbs, fat, and fiber. Use the listed gram amounts/quantities as source-of-truth. The ingredient totals must approximately equal the meal totals. Do not return string ingredients. Do not add markdown.`;
 
 const targetPrompt = profile =>
 `You are a registered dietitian and exercise nutrition specialist. Estimate daily calorie and macro targets from this user profile:
@@ -110,7 +137,7 @@ exports.handler = async event => {
     return json(event, 400, { error: 'Invalid JSON body.' });
   }
 
-  const mode = payload.mode === 'optimize' ? 'optimize' : payload.mode === 'targets' ? 'targets' : payload.mode === 'coach' ? 'coach' : 'analyze';
+  const mode = payload.mode === 'optimize' ? 'optimize' : payload.mode === 'targets' ? 'targets' : payload.mode === 'coach' ? 'coach' : payload.mode === 'repair' ? 'repair' : 'analyze';
   const img = payload.img || null;
   const desc = String(payload.desc || '').trim();
   const analysis = payload.analysis && typeof payload.analysis === 'object' ? payload.analysis : null;
@@ -119,6 +146,7 @@ exports.handler = async event => {
   // Cheap validation happens before any paid OpenAI call.
   if (mode === 'analyze' && !img && !desc) return json(event, 400, { error: 'Please provide an image, a description, or both.' });
   if (mode === 'optimize' && !analysis) return json(event, 400, { error: 'Please provide an analysis to optimize.' });
+  if (mode === 'repair' && !analysis) return json(event, 400, { error: 'Please provide an analysis to repair.' });
   if (mode === 'targets' && !profile) return json(event, 400, { error: 'Please provide a profile.' });
   if (mode === 'coach' && !coachContext) return json(event, 400, { error: 'Please provide coach context.' });
   if (desc.length > 2000) return json(event, 413, { error: 'Description is too long.' });
@@ -135,7 +163,7 @@ exports.handler = async event => {
     ...(mode === 'analyze' && img?.b64 && img?.type
       ? [{ type: 'image_url', image_url: { url: `data:${img.type};base64,${img.b64}` } }]
       : []),
-    { type: 'text', text: mode === 'targets' ? targetPrompt(profile) : mode === 'coach' ? coachPrompt(coachContext) : mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
+    { type: 'text', text: mode === 'targets' ? targetPrompt(profile) : mode === 'coach' ? coachPrompt(coachContext) : mode === 'repair' ? repairPrompt(analysis, desc) : mode === 'optimize' ? optimizePrompt(analysis, desc) : prompt(desc) },
   ];
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -146,8 +174,9 @@ exports.handler = async event => {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o',
-      max_tokens: 1000,
+      model: (mode === 'analyze' && img?.b64) ? 'gpt-4o' : 'gpt-4o-mini',
+      max_tokens: 2000,
+      response_format: { type: 'json_object' },
       messages: [{ role: 'user', content }],
     }),
   });
@@ -158,5 +187,37 @@ exports.handler = async event => {
     return json(event, res.status, { error: data.error?.message || `OpenAI request failed with HTTP ${res.status}` });
   }
 
-  return json(event, 200, { text: data.choices?.[0]?.message?.content || '' });
+  let text = data.choices?.[0]?.message?.content || '';
+
+  // Auto-repair: when the analyze call returns string ingredients or objects missing nutrition,
+  // make a second repair call server-side so the client always receives complete ingredient data.
+  if (mode === 'analyze' && text) {
+    try {
+      const parsed = JSON.parse(text);
+      if (needsIngredientRepair(parsed)) {
+        const repairRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            max_tokens: 1500,
+            response_format: { type: 'json_object' },
+            messages: [{ role: 'user', content: [{ type: 'text', text: repairPrompt(parsed, desc) }] }],
+          }),
+        });
+        if (repairRes.ok) {
+          const repairData = await repairRes.json().catch(() => ({}));
+          const repairedText = repairData.choices?.[0]?.message?.content;
+          if (repairedText) text = repairedText;
+        }
+      }
+    } catch (_) {
+      // If parsing or repair fails, fall through and return the original text.
+    }
+  }
+
+  return json(event, 200, { text });
 };
