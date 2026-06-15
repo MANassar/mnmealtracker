@@ -44,8 +44,8 @@ String _coachPrompt(Map<String, dynamic> context) =>
     'You are a practical nutrition coach. Use all available user context to suggest meals that fit this exact moment of the day.\n'
     'Context: ${jsonEncode(context)}\n'
     'Write directly to the person using friendly second-person language: say "you" and "your". Never refer to them as "the user" or "User".\n'
-    'Prioritize the user targets, remaining calories/macros, current consumption, time of day, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it.\n'
-    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. When recentMeals is not empty and a recent-meal-inspired option is not already in alreadySuggestedMeals, the FIRST suggestion must be the same as, or clearly inspired by, something in recentMeals; adjust portions or sides to better fit today. Do not make grilled chicken with quinoa and vegetables the first suggestion unless it appears in recentMeals. Avoid repeating meals listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one familiar option, one lighter/high-protein option, and one balanced or higher-carb option when the remaining targets allow it.\n'
+    'Prioritize the user targets, remaining calories/macros, current consumption, time of day, currentMealGuidance.maxCalories, meal history patterns, user weight, country/location if present, and exercise/fitness data if present. If country or exercise data is missing, do not invent it. Each entry in recentMeals includes a mealType field (breakfast, lunch, snack, or dinner) derived from the actual time the meal was logged — use these patterns to understand what the user typically eats at each time of day, and set the timing field of your suggestions to match the current mealType from localTime.\n'
+    'Suggest realistic meals for the next eating occasion, not a full generic meal plan. Do not front-load the day: keep each suggestion at or below currentMealGuidance.maxCalories when possible, especially before dinner. When recentMeals includes a meal whose mealType matches localTime.mealType and whose calories fit currentMealGuidance.maxCalories, and that option is not already in alreadySuggestedMeals, the FIRST suggestion must be the same as, or clearly inspired by, that matching meal; adjust portions or sides to better fit today. If no recent meal matches the current mealType and calorie window, do not force a familiar meal. Do not make grilled chicken with quinoa and vegetables the first suggestion unless it appears in recentMeals. Avoid repeating meals listed in alreadySuggestedMeals unless there is a strong reason. Keep suggestions culturally flexible and easy to prepare or order. The 3 suggestions must vary meaningfully in calories and macro split: include one familiar option only when it fits the current time of day, one lighter/high-protein option, and one balanced or higher-carb option when the remaining targets allow it.\n'
     'For every suggestion, explain how the total calories and macros were obtained with ingredient-level estimates. The totals must approximately equal the ingredient breakdown.\n'
     'Return ONLY a raw JSON object — no markdown, no explanation:\n'
     '{"summary":"short read on today so far","focus":"what to prioritize for the next meal","suggestions":[{"mealName":"specific meal idea","timing":"breakfast|lunch|dinner|snack|post-workout|anytime","why":"1-2 short sentences tying it to remaining targets and time of day","calories":450,"protein":35,"carbs":45,"fat":12,"fiber":8,"ingredients":["specific item and portion","specific item and portion"],"nutritionBreakdown":["250g Greek yogurt: 150 kcal, 25g protein, 9g carbs, 1g fat, 0g fiber","50g oats: 190 kcal, 6g protein, 32g carbs, 4g fat, 5g fiber"],"steps":["short prep or ordering instruction","optional second step"]}],"caution":"brief safety note that this is AI-generated general nutrition guidance and can be wrong; consult a qualified professional for medical conditions, pregnancy, eating disorder history, or performance nutrition"}\n'
@@ -753,19 +753,14 @@ class AiService {
     Map<String, dynamic> context,
     String mealSlot,
   ) {
-    final recentMeals = context['recentMeals'];
-    if (recentMeals is! List || recentMeals.isEmpty) return null;
-    Map? raw;
-    for (final item in recentMeals) {
-      if (item is Map) {
-        raw = item;
-        break;
-      }
-    }
+    final raw = _recentMealCandidate(context, mealSlot);
     if (raw == null) return null;
     final name = raw['mealName']?.toString().trim();
     if (name == null || name.isEmpty) return null;
-    final calories = _num(raw['calories'], 450).clamp(180, 750).toDouble();
+    final maxCalories = _currentMealMaxCalories(context);
+    final calorieUpper = maxCalories.isFinite ? maxCalories : 750.0;
+    final calories =
+        _num(raw['calories'], 450).clamp(180, calorieUpper).toDouble();
     final protein = _num(raw['protein'], 30).clamp(5, 70).toDouble();
     final carbs = _num(raw['carbs'], 40).clamp(0, 100).toDouble();
     final fat = _num(raw['fat'], 15).clamp(0, 45).toDouble();
@@ -804,7 +799,8 @@ class AiService {
   ) {
     final recentMeals = context['recentMeals'];
     if (recentMeals is! List || recentMeals.isEmpty) return plan;
-    final recentName = _firstRecentMealName(recentMeals);
+    final mealSlot = _mealSlotFromContext(context);
+    final recentName = _recentMealNameForSlot(context, mealSlot);
     if (recentName == null) return plan;
     if (_mealNameAppearsInList(context['alreadySuggestedMeals'], recentName)) {
       return plan;
@@ -827,7 +823,7 @@ class AiService {
 
     final recentSuggestion = _recentMealSuggestion(
       context,
-      _mealSlotFromContext(context),
+      mealSlot,
     );
     if (recentSuggestion == null) return plan;
     return CoachPlan(
@@ -850,14 +846,57 @@ class AiService {
                 : 'dinner';
   }
 
-  String? _firstRecentMealName(List recentMeals) {
+  String? _recentMealNameForSlot(
+    Map<String, dynamic> context,
+    String mealSlot,
+  ) =>
+      _recentMealCandidate(context, mealSlot)?['mealName']?.toString().trim();
+
+  Map? _recentMealCandidate(Map<String, dynamic> context, String mealSlot) {
+    final recentMeals = context['recentMeals'];
+    if (recentMeals is! List || recentMeals.isEmpty) return null;
+    final maxCalories = _currentMealMaxCalories(context);
+    if (maxCalories.isFinite && maxCalories < 180) return null;
     for (final item in recentMeals) {
-      if (item is Map) {
-        final name = item['mealName']?.toString().trim();
-        if (name != null && name.isNotEmpty) return name;
-      }
+      if (item is! Map) continue;
+      final name = item['mealName']?.toString().trim();
+      if (name == null || name.isEmpty) continue;
+      if (item['mealType']?.toString() != mealSlot) continue;
+      final calories = _num(item['calories'], 0);
+      if (calories <= 0) continue;
+      if (maxCalories.isFinite && calories > maxCalories) continue;
+      return item;
     }
     return null;
+  }
+
+  double _currentMealMaxCalories(Map<String, dynamic> context) {
+    final guidance = Map<String, dynamic>.from(
+      context['currentMealGuidance'] as Map? ?? {},
+    );
+    final guidedMax = _num(guidance['maxCalories'], double.nan);
+    if (!guidedMax.isNaN && guidedMax > 0) return guidedMax;
+
+    final remaining =
+        Map<String, dynamic>.from(context['remainingToday'] as Map? ?? {});
+    final targets = Map<String, dynamic>.from(context['targets'] as Map? ?? {});
+    final remainingCalories = _num(remaining['calories'], double.infinity);
+    final targetCalories = _num(targets['calories'], 1800);
+    if (!remainingCalories.isFinite) return double.infinity;
+
+    final time = Map<String, dynamic>.from(context['localTime'] as Map? ?? {});
+    final hour = (time['hour'] as num?)?.toInt() ?? DateTime.now().hour;
+    final slotShare = hour < 11
+        ? 0.30
+        : hour < 15
+            ? 0.40
+            : hour < 18
+                ? 0.20
+                : 0.70;
+    final remainingShare = hour < 18 ? 0.65 : 1.05;
+    final slotCap = targetCalories * slotShare;
+    final remainingCap = remainingCalories * remainingShare;
+    return slotCap < remainingCap ? slotCap : remainingCap;
   }
 
   bool _mealNameAppearsInList(dynamic meals, String recentName) {

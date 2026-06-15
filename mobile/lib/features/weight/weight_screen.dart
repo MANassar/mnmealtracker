@@ -566,11 +566,14 @@ class _WeightChart extends StatelessWidget {
     final minY = spots.map((s) => s.y).reduce((a, b) => a < b ? a : b);
     final maxY = spots.map((s) => s.y).reduce((a, b) => a > b ? a : b);
     final yPad = ((maxY - minY) * 0.15).clamp(0.5, 5.0);
+    final chartMinY = (minY - yPad).floorToDouble();
+    final chartMaxY = (maxY + yPad).ceilToDouble();
+    final yInterval = _axisInterval(chartMaxY - chartMinY);
 
     return LineChart(
       LineChartData(
-        minY: minY - yPad,
-        maxY: maxY + yPad,
+        minY: chartMinY,
+        maxY: chartMaxY,
         gridData: FlGridData(
           show: true,
           drawVerticalLine: false,
@@ -582,6 +585,7 @@ class _WeightChart extends StatelessWidget {
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
+              interval: yInterval,
               reservedSize: 36,
               getTitlesWidget: (v, _) => Text(
                 v.toStringAsFixed(0),
@@ -628,5 +632,12 @@ class _WeightChart extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  double _axisInterval(double range) {
+    if (range <= 6) return 1;
+    if (range <= 12) return 2;
+    if (range <= 30) return 5;
+    return 10;
   }
 }

@@ -116,6 +116,7 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
                   onLog: _logSuggestion,
                   afterIntro: _FamiliarMealsRow(
                     meals: meals,
+                    targets: targets,
                     remaining: remaining,
                     onLog: _logHistoryMeal,
                   ),
@@ -198,20 +199,35 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     final targets = userValues.targets.toRequiredMap();
     final consumed = _totals(todayMeals);
 
+    final remainingToday = {
+      'calories': targets['calories']! - consumed['calories']!,
+      'protein': targets['protein']! - consumed['protein']!,
+      'carbs': targets['carbs']! - consumed['carbs']!,
+      'fat': targets['fat']! - consumed['fat']!,
+    };
+    final mealType = _mealSlot(now.hour);
+    final currentMealMaxCalories = _currentMealMaxCalories(
+      hour: now.hour,
+      targetCalories: targets['calories']!,
+      remainingCalories: remainingToday['calories']!,
+    );
+
     return {
       'generatedAt': now.toIso8601String(),
       'localTime': {
         'hour': now.hour,
         'weekday': now.weekday,
         'label': _timeLabel(now),
+        'mealType': mealType,
       },
       'targets': targets,
       'consumedToday': consumed,
-      'remainingToday': {
-        'calories': targets['calories']! - consumed['calories']!,
-        'protein': targets['protein']! - consumed['protein']!,
-        'carbs': targets['carbs']! - consumed['carbs']!,
-        'fat': targets['fat']! - consumed['fat']!,
+      'remainingToday': remainingToday,
+      'currentMealGuidance': {
+        'mealType': mealType,
+        'maxCalories': currentMealMaxCalories,
+        'note':
+            'Use this as the upper bound for the next meal so suggestions do not front-load the remaining day.',
       },
       'user': userValues.toCoachUserJson(),
       'recentMeals': recentMeals.take(10).map(_mealContext).toList(),
@@ -288,19 +304,22 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
     return parts.join('\n');
   }
 
-  Map<String, dynamic> _mealContext(Meal meal) => {
-        'date': meal.date,
-        'timestamp': DateTime.fromMillisecondsSinceEpoch(meal.timestamp)
-            .toIso8601String(),
-        'mealName': meal.mealName,
-        'calories': meal.calories,
-        'protein': meal.protein,
-        'carbs': meal.carbs,
-        'fat': meal.fat,
-        'fiber': meal.fiber,
-        'description': _shortText(meal.description, 120),
-        'ingredients': _ingredients(meal.ingredients).take(5).toList(),
-      };
+  Map<String, dynamic> _mealContext(Meal meal) {
+    final mealTime = DateTime.fromMillisecondsSinceEpoch(meal.timestamp);
+    return {
+      'date': meal.date,
+      'timestamp': mealTime.toIso8601String(),
+      'mealType': _mealSlot(mealTime.hour),
+      'mealName': meal.mealName,
+      'calories': meal.calories,
+      'protein': meal.protein,
+      'carbs': meal.carbs,
+      'fat': meal.fat,
+      'fiber': meal.fiber,
+      'description': _shortText(meal.description, 120),
+      'ingredients': _ingredients(meal.ingredients).take(5).toList(),
+    };
+  }
 
   String? _shortText(String? value, int maxLength) {
     final trimmed = value?.trim();
@@ -337,6 +356,33 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
                 ? 'afternoon'
                 : 'evening';
     return '$part · ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _mealSlot(int hour) => hour < 11
+      ? 'breakfast'
+      : hour < 15
+          ? 'lunch'
+          : hour < 18
+              ? 'snack'
+              : 'dinner';
+
+  static double _currentMealMaxCalories({
+    required int hour,
+    required double targetCalories,
+    required double remainingCalories,
+  }) {
+    if (remainingCalories <= 0) return 0;
+    final slotShare = hour < 11
+        ? 0.30
+        : hour < 15
+            ? 0.40
+            : hour < 18
+                ? 0.20
+                : 0.70;
+    final remainingShare = hour < 18 ? 0.65 : 1.05;
+    final slotCap = targetCalories * slotShare;
+    final remainingCap = remainingCalories * remainingShare;
+    return slotCap < remainingCap ? slotCap : remainingCap;
   }
 
   String _friendlyError(Object e) {
@@ -698,21 +744,57 @@ class _ErrorCard extends StatelessWidget {
 
 class _FamiliarMealsRow extends StatelessWidget {
   final List<Meal> meals;
+  final Map<String, double> targets;
   final Map<String, double> remaining;
   final ValueChanged<Meal> onLog;
 
   const _FamiliarMealsRow({
     required this.meals,
+    required this.targets,
     required this.remaining,
     required this.onLog,
   });
 
-  List<Meal> _candidates() {
-    final remainingCals = remaining['calories'] ?? 0;
-    if (remainingCals <= 0) return [];
+  static int _timeBucket(int hour) {
+    if (hour < 11) return 0; // morning
+    if (hour < 15) return 1; // midday
+    if (hour < 18) return 2; // afternoon
+    return 3; // evening
+  }
+
+  static String _bucketName(int bucket) {
+    switch (bucket) {
+      case 0:
+        return 'breakfast';
+      case 1:
+        return 'lunch';
+      case 2:
+        return 'snack';
+      default:
+        return 'dinner';
+    }
+  }
+
+  List<MapEntry<Meal, String>> _candidatesWithSlots() {
+    final remCals = remaining['calories'] ?? 0;
+    final remP = remaining['protein'] ?? 0;
+    final remC = remaining['carbs'] ?? 0;
+    final remF = remaining['fat'] ?? 0;
+
+    if (remCals <= 0) return [];
+
+    final now = DateTime.now();
+    final currentBucket = _timeBucket(now.hour);
+    final maxCalories = _CoachScreenState._currentMealMaxCalories(
+      hour: now.hour,
+      targetCalories: targets['calories'] ?? remCals,
+      remainingCalories: remCals,
+    );
 
     final freq = <String, int>{};
+    final bucketCounts = <String, Map<int, int>>{};
     final latest = <String, Meal>{};
+
     final sorted = [...meals]
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
@@ -720,22 +802,92 @@ class _FamiliarMealsRow extends StatelessWidget {
       final key = meal.mealName.toLowerCase().trim();
       if (key.isEmpty) continue;
       freq[key] = (freq[key] ?? 0) + 1;
-      latest.putIfAbsent(key, () => meal);
+      final bucket = _timeBucket(
+        DateTime.fromMillisecondsSinceEpoch(meal.timestamp).hour,
+      );
+      (bucketCounts.putIfAbsent(key, () => {}))[bucket] =
+          ((bucketCounts[key]![bucket]) ?? 0) + 1;
+      if (bucket == currentBucket) latest.putIfAbsent(key, () => meal);
     }
 
-    return latest.values
-        .where((m) => m.calories > 0 && m.calories <= remainingCals * 1.1)
-        .toList()
+    final filtered = latest.values.where((m) {
+      final key = m.mealName.toLowerCase().trim();
+      final timeLogs = bucketCounts[key]?[currentBucket] ?? 0;
+      if (timeLogs == 0) return false;
+      if (m.calories <= 0) return false;
+      if (m.calories > maxCalories) return false;
+      // Reject if any macro wildly overshoots what's left (50% tolerance).
+      // Only applies when there's a meaningful amount still remaining.
+      if (remP > 10 && m.protein > remP * 1.5) return false;
+      if (remC > 10 && m.carbs > remC * 1.5) return false;
+      if (remF > 5 && m.fat > remF * 1.5) return false;
+      return true;
+    }).toList()
       ..sort((a, b) {
-        final af = freq[a.mealName.toLowerCase().trim()] ?? 0;
-        final bf = freq[b.mealName.toLowerCase().trim()] ?? 0;
-        return bf != af ? bf.compareTo(af) : b.timestamp.compareTo(a.timestamp);
+        final as_ = _candidateScore(
+          a,
+          freq,
+          bucketCounts,
+          currentBucket,
+          remP,
+          remC,
+          remF,
+        );
+        final bs_ = _candidateScore(
+          b,
+          freq,
+          bucketCounts,
+          currentBucket,
+          remP,
+          remC,
+          remF,
+        );
+        return bs_.compareTo(as_);
       });
+
+    return filtered.map((m) {
+      final key = m.mealName.toLowerCase().trim();
+      final bMap = bucketCounts[key] ?? {};
+      final typicalBucket = bMap.isEmpty
+          ? currentBucket
+          : bMap.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+      return MapEntry(m, _bucketName(typicalBucket));
+    }).toList();
+  }
+
+  static double _candidateScore(
+    Meal meal,
+    Map<String, int> freq,
+    Map<String, Map<int, int>> bucketCounts,
+    int currentBucket,
+    double remP,
+    double remC,
+    double remF,
+  ) {
+    final key = meal.mealName.toLowerCase().trim();
+    double score = 0;
+
+    // Frequency bonus (up to 10 pts).
+    score += (freq[key] ?? 0).clamp(0, 10).toDouble();
+
+    // Time-of-day match: fraction of historical logs in the current bucket
+    // (up to 15 pts). Meals never eaten at this time of day score 0 here.
+    final bMap = bucketCounts[key] ?? {};
+    final totalLogs = freq[key] ?? 1;
+    final timeLogs = bMap[currentBucket] ?? 0;
+    score += (timeLogs / totalLogs) * 15.0;
+
+    // Macro fit: reward meals that proportionally fill remaining targets.
+    if (remP > 0) score += (meal.protein / remP).clamp(0.0, 1.0) * 10.0;
+    if (remC > 0) score += (meal.carbs / remC).clamp(0.0, 1.0) * 5.0;
+    if (remF > 0) score += (meal.fat / remF).clamp(0.0, 1.0) * 5.0;
+
+    return score;
   }
 
   @override
   Widget build(BuildContext context) {
-    final candidates = _candidates();
+    final candidates = _candidatesWithSlots();
     if (candidates.isEmpty) return const SizedBox.shrink();
 
     final c = context.appColors;
@@ -748,14 +900,15 @@ class _FamiliarMealsRow extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 148,
+          height: 165,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: candidates.length,
             separatorBuilder: (_, __) => const SizedBox(width: 10),
             itemBuilder: (_, i) => _FamiliarCard(
-              candidates[i],
-              onLog: () => onLog(candidates[i]),
+              candidates[i].key,
+              typicalSlot: candidates[i].value,
+              onLog: () => onLog(candidates[i].key),
             ),
           ),
         ),
@@ -767,13 +920,26 @@ class _FamiliarMealsRow extends StatelessWidget {
 
 class _FamiliarCard extends StatelessWidget {
   final Meal meal;
+  final String typicalSlot;
   final VoidCallback onLog;
 
-  const _FamiliarCard(this.meal, {required this.onLog});
+  const _FamiliarCard(this.meal,
+      {required this.typicalSlot, required this.onLog});
 
   @override
   Widget build(BuildContext context) {
     final c = context.appColors;
+    final now = DateTime.now();
+    final currentHour = now.hour;
+    final currentSlot = currentHour < 11
+        ? 'breakfast'
+        : currentHour < 15
+            ? 'lunch'
+            : currentHour < 18
+                ? 'snack'
+                : 'dinner';
+    final isCurrentTime = typicalSlot == currentSlot;
+
     return Container(
       width: 165,
       padding: const EdgeInsets.all(12),
@@ -792,7 +958,16 @@ class _FamiliarCard extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
+          Text(
+            typicalSlot.toUpperCase(),
+            style: TextStyle(
+              color: isCurrentTime ? c.accent : c.muted,
+              fontSize: 9,
+              letterSpacing: 1.1,
+            ),
+          ),
+          const SizedBox(height: 3),
           Text(
             '${meal.calories.round()} kcal',
             style: TextStyle(

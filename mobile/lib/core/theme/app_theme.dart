@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 
-// Exact palette from the PWA's CSS variables
 class AppColors {
   // Dark theme
   static const darkBg = Color(0xFF0C1A10);
-  static const darkSurface = Color(0xFF111F15);
-  static const darkCard = Color(0xFF18281C);
-  static const darkBorder = Color(0x0FFFFFFF); // rgba(255,255,255,0.06)
-  static const darkText = Color(0xFFF0ECE3);
-  static const darkMuted = Color(0xFF556358);
+  static const darkSurface = Color(0xFF132018);
+  static const darkCard = Color(0xFF1C2C22);
+  static const darkBorder = Color(0x4DFFFFFF); // rgba(255,255,255,0.30)
+  static const darkText = Color(0xFFFFF8EC);
+  static const darkMuted = Color(0xFFB8C4BA);
 
   // Light theme
   static const lightBg = Color(0xFFF7F4EC);
@@ -19,18 +18,18 @@ class AppColors {
   static const lightMuted = Color(0xFF667268);
 
   // Shared accent colors
-  static const accent = Color(0xFFC9A84C); // dark accent
+  static const accent = Color(0xFFE6C65C); // dark accent
   static const accentLight = Color(0xFF9F7B19); // light accent
-  static const mint = Color(0xFF6DB87A);
+  static const mint = Color(0xFF82D894);
   static const mintLight = Color(0xFF2F8A48);
-  static const sky = Color(0xFF7DA8D4);
+  static const sky = Color(0xFF9DCAFA);
   static const skyLight = Color(0xFF3C76AD);
-  static const peach = Color(0xFFD4886A);
+  static const peach = Color(0xFFF2A17D);
   static const peachLight = Color(0xFFB85F3C);
-  static const plum = Color(0xFFA882C4);
+  static const plum = Color(0xFFCEA5F2);
   static const plumLight = Color(0xFF8153A6);
-  static const danger = Color(0xFFD46A5A);
-  static const oai = Color(0xFF74AA9C);
+  static const danger = Color(0xFFFF8A78);
+  static const oai = Color(0xFF8AD4C4);
 }
 
 class AppTheme {
